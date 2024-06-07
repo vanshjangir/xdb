@@ -16,6 +16,7 @@ type Node struct{
 }
 
 var Root *Node
+var altRoot *Node
 
 func getNode() *Node {
     var node = new(Node)
@@ -35,6 +36,12 @@ func makeCopy(node *Node) *Node{
     newNode := getNode()
     newNode.isLeaf = node.isLeaf
     newNode.isRoot = node.isRoot
+    newNode.nkeys = node.nkeys
+    newNode.next = node.next
+
+    if(newNode.isRoot == true){
+        altRoot = newNode
+    }
 
     for i := 0; i < int(node.nkeys); i++ {
         newNode.keys[i] = node.keys[i]
@@ -67,8 +74,16 @@ func findParent(node *Node ,key uint64, curLevel uint32, wLevel uint32) *Node{
     }
 }
 
+func changeRoot(){
+    Root = altRoot
+}
+
 func Insert(node *Node, key uint64, value *[]byte, level uint32){
+
     var index uint64
+    if(node.isRoot == true){
+        node = makeCopy(node)
+    }
     
     if(node.isLeaf == false){
         for index = 0; index < node.nkeys; index++ {
@@ -76,7 +91,9 @@ func Insert(node *Node, key uint64, value *[]byte, level uint32){
                 break
             }
         }
-        Insert(node.children[index],key,value,level+1)
+        newChild := makeCopy(node.children[index])
+        node.children[index] = newChild
+        Insert(newChild,key,value,level+1)
         return
     }
 
@@ -102,15 +119,17 @@ func Insert(node *Node, key uint64, value *[]byte, level uint32){
     if(node.nkeys >= M){
         k, first, second := splitLeaf(node)
         if(node.isRoot == true){
-            newRoot := new(Node)
+            newRoot := getNode()
             newRoot.isRoot = true
             insertInner(newRoot, k, first, second, level)
-            Root = newRoot
+            altRoot = newRoot
         }else{
-            parent := findParent(Root, key, 0, level-1)
+            parent := findParent(altRoot, key, 0, level-1)
             insertInner(parent, k, first, second, level-1)
         }
     }
+
+    changeRoot();
 }
 
 func insertInner(
@@ -141,13 +160,13 @@ func insertInner(
 
     if(node.nkeys >= M){
         k, first, second := splitInner(node)
-        if(node == Root){
-            newRoot := new(Node)
+        if(node.isRoot == true){
+            newRoot := getNode()
             newRoot.isRoot = true
             insertInner(newRoot, k, first, second, pLevel)
-            Root = newRoot
+            altRoot = newRoot
         }else{
-            parent := findParent(Root, key, 0, pLevel-1)
+            parent := findParent(altRoot, key, 0, pLevel-1)
             insertInner(parent, k, first, second, pLevel-1)
         }
     }
@@ -201,7 +220,11 @@ func splitLeaf(node *Node) (uint64, *Node, *Node){
 }
 
 func Delete(node *Node, key uint64, level uint32){
+
     var index uint64
+    if(node.isRoot == true){
+        node = makeCopy(node)
+    }
 
     if(node.isLeaf == false){
         var isInner bool = false
@@ -213,9 +236,13 @@ func Delete(node *Node, key uint64, level uint32){
                 isInner = true
             }
         }
-        Delete(node.children[index],key,level+1)
+
+        newChild := makeCopy(node.children[index])
+        node.children[index] = newChild
+        Delete(newChild,key,level+1)
+
         if(isInner == true){
-            deleteInner(Root,key)
+            deleteInner(altRoot,key)
         }
         return
     }
@@ -237,16 +264,21 @@ func Delete(node *Node, key uint64, level uint32){
     node.nkeys -= 1
 
     if(node.nkeys < MID){
+        if(node.isRoot == true){
+            return
+        }
         isLeaf := true
         fill(node, childKey, isLeaf, level)
     }
+
+    changeRoot()
 }
 
 func fill(child *Node, childKey uint64, isLeaf bool, level uint32){
 
     var cIndex uint64
     var ocIndex uint64
-    parent := findParent(Root, childKey, 0, level-1)
+    parent := findParent(altRoot, childKey, 0, level-1)
 
     for cIndex = 0; cIndex < parent.nkeys; cIndex++ {
         if(parent.keys[cIndex] > childKey){
@@ -260,7 +292,9 @@ func fill(child *Node, childKey uint64, isLeaf bool, level uint32){
         ocIndex = cIndex+1
     }
 
-    otherChild := parent.children[ocIndex]
+    otherChild := makeCopy(parent.children[ocIndex])
+    parent.children[ocIndex] = otherChild
+
     if(otherChild.nkeys == MID){
         var passIndex uint64
         if(cIndex < ocIndex){
@@ -362,12 +396,12 @@ func merge(
     parent.children[parent.nkeys] = nil
     parent.nkeys -= 1
 
-    if(parent != Root && parent.nkeys < MID){
+    if(parent.isRoot == false && parent.nkeys < MID){
         isLeaf := false
         fill(parent, childKey, isLeaf, level-1)
     }
-    if(parent == Root && parent.nkeys == 0){
-        Root = first
+    if(parent.isRoot == true && parent.nkeys == 0){
+        altRoot = first
     }
 }
 
@@ -396,12 +430,12 @@ func mergeInner(
     parent.children[parent.nkeys] = nil
     parent.nkeys -= 1
 
-    if(parent != Root && parent.nkeys < MID){
+    if(parent.isRoot == false && parent.nkeys < MID){
         isLeaf := false
         fill(parent, childKey, isLeaf, level-1)
     }
-    if(parent == Root && parent.nkeys == 0){
-        Root = first
+    if(parent.isRoot == true && parent.nkeys == 0){
+        altRoot = first
     }
 }
 

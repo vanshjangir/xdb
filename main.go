@@ -24,6 +24,7 @@ func main(){
     tree.Insert(tree.Root, 85, &v, 0)
     tree.Insert(tree.Root, 95, &v, 0)
 
+    tree.Delete(tree.Root, 15, 0)
 
     tree.PrintTree(tree.Root,0)
 }
