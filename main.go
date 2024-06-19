@@ -2,29 +2,33 @@ package main
 
 import (
     "fmt"
-    "github.com/vanshjangir/xdb/tree"
+    "github.com/vanshjangir/xdb/store"
 )
 
 func main(){
     fmt.Println("Starting...")
-
+    var k []byte
     var v []byte
 
     v = append(v, 100)
+    
+    store.CreateByte()
+    store.Insert(store.RootByte, append(k, 5), v, 0)
+    store.Insert(store.RootByte, append(k, 15), v, 0)
+    store.Insert(store.RootByte, append(k, 25), v, 0)
+    store.Insert(store.RootByte, append(k, 35), v, 0)
+    store.Insert(store.RootByte, append(k, 45), v, 0)
+    store.Insert(store.RootByte, append(k, 55), v, 0)
+    store.Insert(store.RootByte, append(k, 65), v, 0)
+    store.Insert(store.RootByte, append(k, 75), v, 0)
+    store.Insert(store.RootByte, append(k, 85), v, 0)
+    store.Insert(store.RootByte, append(k, 95), v, 0)
+    store.STOP = true
+    store.Insert(store.RootByte, append(k, 105), v, 0)
 
-    tree.Create()
-    tree.Insert(tree.Root, 5, &v, 0)
-    tree.Insert(tree.Root, 15, &v, 0)
-    tree.Insert(tree.Root, 25, &v, 0)
-    tree.Insert(tree.Root, 35, &v, 0)
-    tree.Insert(tree.Root, 45, &v, 0)
-    tree.Insert(tree.Root, 55, &v, 0)
-    tree.Insert(tree.Root, 65, &v, 0)
-    tree.Insert(tree.Root, 75, &v, 0)
-    tree.Insert(tree.Root, 85, &v, 0)
-    tree.Insert(tree.Root, 95, &v, 0)
+    //for i := 0; i < 1400; i += 50 {
+    //    fmt.Println(store.FILE[i:i+50])
+    //}
 
-    tree.Delete(tree.Root, 15, 0)
-
-    tree.PrintTree(tree.Root,0)
+    store.PrintTree(store.RootByte, 0)
 }
