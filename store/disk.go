@@ -115,12 +115,22 @@ func (node *NodeByte) key(index uint16) []byte{
     return node.data[keyOffset:keyOffset+klen]
 }
 
+func (node *NodeByte) klen(index uint16) uint16{
+    keyOffset := binary.LittleEndian.Uint16(node.data[OFF_MAP + index*2:])
+    return uint16(binary.LittleEndian.Uint16(node.data[keyOffset:]))
+}
+
 func (node *NodeByte) value(index uint16) []byte{
     keyOffset := binary.LittleEndian.Uint16(node.data[OFF_MAP + index*2:])
     klen := uint16(binary.LittleEndian.Uint16(node.data[keyOffset:]))
     vlen := uint16(binary.LittleEndian.Uint16(node.data[keyOffset+2:]))
     vOffset := keyOffset + 4 + klen
     return node.data[vOffset:vOffset+vlen]
+}
+
+func (node *NodeByte) vlen(index uint16) uint16{
+    keyOffset := binary.LittleEndian.Uint16(node.data[OFF_MAP + index*2:])
+    return uint16(binary.LittleEndian.Uint16(node.data[keyOffset+2:]))
 }
 
 func (node *NodeByte) cptr(index uint16) uint64{
@@ -203,7 +213,6 @@ func (node *NodeByte) addKC(
     node.setKeyOffset(index, keyOffset)
     node.setSize(node.size()+4+8+uint64(klen))
     node.setKeyOffset(node.nkeys()+1, keyOffset+4+klen+8)
-
 }
 
 func (node *NodeByte) setCptr(index uint16, ptr uint64){
