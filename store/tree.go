@@ -2,71 +2,256 @@ package store
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 )
 
 const M = 3
 const MID = (M/2)
 const TREE_PAGE_SIZE = 4096
-var STOP bool = false
+const (
+     TYPE_ROOT_I = 1
+     TYPE_ROOT_L = 2
+     TYPE_I = 3
+     TYPE_L = 4
+)
 
+const (
+    OFF_TYPE = 0
+    OFF_NKEYS = 2
+    OFF_MAP = 4
+    OFF_NEXT = 4 + 2*(M+1)
+    OFF_FCP = 4 + 2*(M+1)
+    OFF_FKEY = 4 + 2*(M+1) + 8
+)
 
-type Node struct{
-    isRoot bool
-    isLeaf bool
-    nkeys uint32
-    children [M+1]*Node
-    keys [M][]byte
-    values [M][]byte
-    next *Node
+type NodeByte struct{
+    data []byte
+    selfPtr uint64
 }
 
-var Root *Node
-var altRoot *Node
+var FILE [100000]byte
+var curOffset uint64 = 100
+var rootByte *NodeByte
+var altRootByte *NodeByte
+var rootOffset uint64 = 0
+var altRootOffset uint64 = 0
 
-func getNode() *Node {
-    var node = new(Node)
+func getNodeByte() (*NodeByte, uint64){
+    var node = new(NodeByte)
+    
+    node.data = FILE[curOffset:]
+    node.selfPtr = curOffset
+    node.setKeyOffset(0,OFF_FKEY)
+    node.setNkeys(0)
+    
+    off := curOffset
+    curOffset += 100
+    return node, off
+}
+
+func tempNode(offset uint16, size uint64) (*NodeByte){
+    var node = new(NodeByte)
+    node.data = FILE[offset:]
     return node
 }
 
-func Create(){
-    Root = getNode()
-    Root.isLeaf = true
-    Root.isRoot = true
-    Root.nkeys = 0
-
-    fmt.Println("Tree initialized")
+func CreateByte(){
+    fmt.Println("root created")
+    rootByte, rootOffset = getNodeByte()
+    rootByte.setType(TYPE_ROOT_L)
 }
 
-func makeCopy(node *Node) *Node{
-    newNode := getNode()
-    newNode.isLeaf = node.isLeaf
-    newNode.isRoot = node.isRoot
-    newNode.nkeys = node.nkeys
-    newNode.next = node.next
-
-    if(newNode.isRoot == true){
-        altRoot = newNode
+func makeByteCopy(node *NodeByte) (*NodeByte, uint64){
+    newByte, offset := getNodeByte()
+    if(node.isRoot() == true){
+        altRootByte = newByte
+        altRootOffset = offset
     }
-
-    for i := 0; i < int(node.nkeys); i++ {
-        newNode.keys[i] = node.keys[i]
-    }
-    
-    if(newNode.isLeaf == true){
-        for i := 0; i < int(node.nkeys); i++ {
-            newNode.values[i] = node.values[i]
+    copy(newByte.data[:OFF_NKEYS], node.data[:OFF_NKEYS])
+    copy(newByte.data[OFF_FCP:OFF_FCP+8], node.data[OFF_FCP:OFF_FCP+8])
+    for i := uint16(0);  i < node.nkeys(); i++ {
+        if(node.isLeaf() == true){
+            newByte.addKV(
+                i,
+                node.klen(i),
+                node.key(i),
+                node.vlen(i),
+                node.value(i),
+            )
+        }else{
+            newByte.addKC(
+                i,
+                node.klen(i),
+                node.key(i),
+                node.cptr(i+1),
+            )
         }
+        newByte.setNkeys(i+1)
+    }
+
+    return newByte,offset
+}
+
+func changeRootByte(){
+    rootByte = altRootByte
+    rootOffset = altRootOffset
+    binary.LittleEndian.PutUint64(FILE[:], rootOffset)
+}
+
+func (node *NodeByte) nodetype() uint16{
+    return binary.LittleEndian.Uint16(node.data[OFF_TYPE : OFF_TYPE+2])
+}
+
+func (node *NodeByte) isLeaf() bool{
+    if(node.nodetype() == TYPE_ROOT_L || node.nodetype() == TYPE_L){
+        return true
+    }
+    return false
+}
+
+func (node *NodeByte) isRoot() bool{
+    if(node.nodetype() == TYPE_ROOT_I || node.nodetype() == TYPE_ROOT_L){
+        return true
+    }
+    return false
+}
+
+func (node *NodeByte) nkeys() uint16{
+    return binary.LittleEndian.Uint16(node.data[OFF_NKEYS : OFF_NKEYS+2])
+}
+
+func (node *NodeByte) keyOffset(index uint16) uint16{
+    return binary.LittleEndian.Uint16(node.data[OFF_MAP + 2*index:])
+}
+
+func (node *NodeByte) size() uint16{
+    return binary.LittleEndian.Uint16(node.data[OFF_MAP + 2*node.nkeys():])
+}
+
+func (node *NodeByte) key(index uint16) []byte{
+    keyOffset := binary.LittleEndian.Uint16(node.data[OFF_MAP + index*2:])
+    klen := uint16(binary.LittleEndian.Uint16(node.data[keyOffset:]))
+    keyOffset += 4
+    return node.data[keyOffset:keyOffset+klen]
+}
+
+func (node *NodeByte) klen(index uint16) uint16{
+    keyOffset := binary.LittleEndian.Uint16(node.data[OFF_MAP + index*2:])
+    return uint16(binary.LittleEndian.Uint16(node.data[keyOffset:]))
+}
+
+func (node *NodeByte) value(index uint16) []byte{
+    keyOffset := binary.LittleEndian.Uint16(node.data[OFF_MAP + index*2:])
+    klen := uint16(binary.LittleEndian.Uint16(node.data[keyOffset:]))
+    vlen := uint16(binary.LittleEndian.Uint16(node.data[keyOffset+2:]))
+    vOffset := keyOffset + 4 + klen
+    return node.data[vOffset:vOffset+vlen]
+}
+
+func (node *NodeByte) vlen(index uint16) uint16{
+    keyOffset := binary.LittleEndian.Uint16(node.data[OFF_MAP + index*2:])
+    return uint16(binary.LittleEndian.Uint16(node.data[keyOffset+2:]))
+}
+
+func (node *NodeByte) cptr(index uint16) uint64{
+    if(index == 0){
+        return binary.LittleEndian.Uint64(node.data[OFF_FCP:])
+    }
+    index -= 1
+    keyOffset := binary.LittleEndian.Uint16(node.data[OFF_MAP + 2*index:])
+    klen := uint16(binary.LittleEndian.Uint16(node.data[keyOffset:]))
+    keyOffset += 4 + klen
+    return binary.LittleEndian.Uint64(node.data[keyOffset:])
+}
+
+func (node *NodeByte) children(index uint16) *NodeByte{
+    chOffset := node.cptr(index)
+    chNode,_ := getNodeByte()
+    chNode.data = FILE[chOffset:]
+    return chNode
+}
+
+func (node *NodeByte) setType(TYPE uint16){
+    binary.LittleEndian.PutUint16(node.data[OFF_TYPE:], TYPE)
+}
+
+func (node *NodeByte) setNkeys(nkeys uint16){
+    binary.LittleEndian.PutUint16(node.data[OFF_NKEYS:], nkeys)
+}
+
+func (node *NodeByte) setKeyOffset(index uint16, offset uint16){
+    binary.LittleEndian.PutUint16(node.data[OFF_MAP + 2*index:], offset)
+}
+
+// Add key and value to the end of the kv pair segment
+// and update the offset map
+func (node *NodeByte) addKV(
+    index uint16,
+    klen uint16,
+    key []byte,
+    vlen uint16,
+    value []byte,
+){
+    keyOffset := binary.LittleEndian.Uint16(node.data[OFF_MAP+2*node.nkeys():])
+
+    binary.LittleEndian.PutUint16(node.data[keyOffset:],klen)
+    binary.LittleEndian.PutUint16(node.data[keyOffset+2:],vlen)
+    for i := uint16(0); i < klen; i++ {
+        node.data[keyOffset+i+4] = key[i]
+    }
+    for i := uint16(0); i < vlen; i++ {
+        node.data[keyOffset+i+4+klen] = value[i]
+    }
+
+    node.setKeyOffset(index, keyOffset)
+    node.setKeyOffset(node.nkeys()+1, keyOffset+4+klen+vlen)
+}
+
+// Add key and child to the end of the kc pair segment
+// and update the offset map,
+// the index = actual index of child - 1
+func (node *NodeByte) addKC(
+    index uint16,
+    klen uint16,
+    key []byte,
+    cptr uint64,
+){
+    keyOffset := binary.LittleEndian.Uint16(node.data[OFF_MAP+2*node.nkeys():])
+
+    binary.LittleEndian.PutUint16(node.data[keyOffset:],klen)
+    binary.LittleEndian.PutUint16(node.data[keyOffset+2:],8)
+    for i := uint16(0); i < klen; i++ {
+        node.data[keyOffset+i+4] = key[i]
+    }
+    binary.LittleEndian.PutUint64(node.data[keyOffset+4+klen:],cptr)
+
+    node.setKeyOffset(index, keyOffset)
+    node.setKeyOffset(node.nkeys()+1, keyOffset+4+klen+8)
+}
+
+func (node *NodeByte) setCptr(index uint16, ptr uint64){
+    if(index == 0){
+        binary.LittleEndian.PutUint64(node.data[OFF_FCP:], ptr)
     }else{
-        for i := 0; i < int(node.nkeys+1); i++ {
-            newNode.children[i] = node.children[i]
-        }
+        keyOffset := binary.LittleEndian.Uint16(node.data[OFF_MAP + (index-1)*2:])
+        klen := uint16(binary.LittleEndian.Uint16(node.data[keyOffset:]))
+        keyOffset += 4 + klen
+        binary.LittleEndian.PutUint64(node.data[keyOffset:], ptr)
     }
-
-    return newNode
 }
 
-func findParent(node *NodeByte ,key []byte, curLevel uint32, wLevel uint32) *NodeByte{
+func (node *NodeByte) setNext(offptr uint64){
+    binary.LittleEndian.PutUint64(node.data[OFF_NEXT:], offptr)
+}
+
+func findParent(
+    node *NodeByte,
+    key []byte,
+    curLevel uint32,
+    wLevel uint32,
+) *NodeByte{
+
     var index uint16
     for index = 0; index < node.nkeys(); index++ {
         cr := bytes.Compare(node.key(index), key)
@@ -81,11 +266,7 @@ func findParent(node *NodeByte ,key []byte, curLevel uint32, wLevel uint32) *Nod
     }
 }
 
-func changeRoot(){
-    Root = altRoot
-}
-
-func Insert(node *NodeByte, key []byte, value []byte, level uint32){
+func insertLeaf(node *NodeByte, key []byte, value []byte, level uint32){
 
     var index uint16
     if(node.isRoot() == true){
@@ -101,7 +282,7 @@ func Insert(node *NodeByte, key []byte, value []byte, level uint32){
         }
         newChild, offset := makeByteCopy(node.children(index))
         node.setCptr(index, offset)
-        Insert(newChild, key, value, level+1)
+        insertLeaf(newChild, key, value, level+1)
         return
     }
 
@@ -111,7 +292,9 @@ func Insert(node *NodeByte, key []byte, value []byte, level uint32){
             break
         }
         if(cr == 0){
-            // update the kv pair coming soon
+            node.addKV(index, uint16(len(key)), key, uint16(len(value)), value)
+            node.setKeyOffset(node.nkeys(), node.keyOffset(node.nkeys()+1))
+            changeRootByte();
             return
         }
     }
@@ -138,6 +321,37 @@ func Insert(node *NodeByte, key []byte, value []byte, level uint32){
         }
     }
 
+    changeRootByte();
+}
+
+func update(node *NodeByte, key []byte, value []byte, level uint32){
+
+    var index uint16
+    if(node.isRoot() == true){
+        node,_ = makeByteCopy(node)
+    }
+    
+    if(node.isLeaf() == false){
+        for index = 0; index < node.nkeys(); index++ {
+            cr := bytes.Compare(node.key(index), key)
+            if(cr > 0){
+                break
+            }
+        }
+        newChild, offset := makeByteCopy(node.children(index))
+        node.setCptr(index, offset)
+        update(newChild, key, value, level+1)
+        return
+    }
+
+    for index = 0; index < node.nkeys(); index++ {
+        cr := bytes.Compare(node.key(index), key)
+        if(cr == 0){
+            node.addKV(index, uint16(len(key)), key, uint16(len(value)), value)
+            node.setKeyOffset(node.nkeys(), node.keyOffset(node.nkeys()+1))
+            break
+        }
+    }
     changeRootByte();
 }
 
@@ -248,7 +462,7 @@ func splitLeaf(node *NodeByte) ([]byte, uint64, uint64){
     return node.key(MID), firstPtr, secondPtr
 }
 
-func Delete(node *NodeByte, key []byte, level uint32){
+func deleteLeaf(node *NodeByte, key []byte, level uint32){
 
     var index uint16
     if(node.isRoot() == true){
@@ -269,7 +483,7 @@ func Delete(node *NodeByte, key []byte, level uint32){
 
         newChild, offset := makeByteCopy(node.children(index))
         node.setCptr(index, offset)
-        Delete(newChild,key,level+1)
+        deleteLeaf(newChild,key,level+1)
 
         if(isInner == true){
             deleteInner(altRootByte,key)
@@ -343,8 +557,6 @@ func fill(child *NodeByte, childKey []byte, isLeaf bool, level uint32){
 
     if(isLeaf == true){
         if(ocIndex > cIndex){
-            //child.keys[child.nkeys] = otherChild.keys[0]
-            //child.values[child.nkeys] = otherChild.values[0]
             child.addKV(
                 child.nkeys(),
                 otherChild.klen(0),
@@ -354,8 +566,7 @@ func fill(child *NodeByte, childKey []byte, isLeaf bool, level uint32){
             )
             child.setNkeys(child.nkeys()+1)
             
-            Delete(otherChild, otherChild.key(0), 0)
-            //parent.keys[cIndex] = otherChild.keys[0]
+            deleteLeaf(otherChild, otherChild.key(0), 0)
             parent.addKC(
                 cIndex,
                 otherChild.klen(0),
@@ -364,14 +575,13 @@ func fill(child *NodeByte, childKey []byte, isLeaf bool, level uint32){
             )
             parent.setKeyOffset(parent.nkeys(), parent.keyOffset(parent.nkeys()+1))
         }else{
-            Insert(
+            insertLeaf(
                 child,
                 otherChild.key(otherChild.nkeys()-1),
                 otherChild.value(otherChild.nkeys()-1),
                 0,
             )
-            Delete(otherChild, otherChild.key(otherChild.nkeys()-1), 0)
-            //parent.keys[cIndex-1] = child.keys[0]
+            deleteLeaf(otherChild, otherChild.key(otherChild.nkeys()-1), 0)
             parent.addKC(
                 cIndex-1,
                 child.klen(0),
@@ -381,9 +591,6 @@ func fill(child *NodeByte, childKey []byte, isLeaf bool, level uint32){
         }
     }else{
         if(ocIndex > cIndex){
-            //child.keys[child.nkeys] = parent.keys[cIndex]
-            //child.children[child.nkeys+1] = otherChild.children[0]
-            //child.nkeys += 1
 
             child.addKC(
                 child.nkeys(),
@@ -393,7 +600,6 @@ func fill(child *NodeByte, childKey []byte, isLeaf bool, level uint32){
             )
             child.setNkeys(child.nkeys()+1)
             
-            //parent.keys[cIndex] = otherChild.keys[0]
             parent.addKC(
                 cIndex,
                 otherChild.klen(0),
@@ -404,18 +610,11 @@ func fill(child *NodeByte, childKey []byte, isLeaf bool, level uint32){
 
             otherChild.setCptr(0, otherChild.cptr(1))
             for i := uint16(0); i < otherChild.nkeys()-1; i++ {
-                //otherChild.keys[i] = otherChild.keys[i+1]
-                //otherChild.children[i] = otherChild.children[i+1]
                 otherChild.setKeyOffset(i, otherChild.keyOffset(i+1))
             }
             otherChild.setNkeys(otherChild.nkeys()-1)
 
         }else{
-
-            //child.keys[child.nkeys] = parent.keys[parent.nkeys-1]
-            //child.children[child.nkeys+1] =
-            //otherChild.children[otherChild.nkeys]
-            //child.nkeys += 1
 
             child.addKC(
                 child.nkeys(),
@@ -425,7 +624,6 @@ func fill(child *NodeByte, childKey []byte, isLeaf bool, level uint32){
             )
             child.setNkeys(child.nkeys()+1)
 
-            //parent.keys[parent.nkeys-1] = otherChild.keys[otherChild.nkeys-1]
             parent.addKC(
                 parent.nkeys()-1,
                 otherChild.klen(otherChild.nkeys()-1),
@@ -435,24 +633,17 @@ func fill(child *NodeByte, childKey []byte, isLeaf bool, level uint32){
             parent.setKeyOffset(parent.nkeys(), parent.keyOffset(parent.nkeys()+1))
             
             for i := child.nkeys()-1; i > 0; i++ {
-                //child.keys[i], child.keys[i-1] = child.keys[i-1], child.keys[i]
-                //child.children[i+1], child.children[i] =
-                //child.children[i], child.children[i+1]
                 off := child.keyOffset(i)
                 child.setKeyOffset(i, child.keyOffset(i-1))
                 child.setKeyOffset(i-1, off)
             }
-            //child.children[0], child.children[1] =
-            //child.children[1], child.children[0]
             off := child.keyOffset(0)
             child.setKeyOffset(0, child.keyOffset(1))
             child.setKeyOffset(1, off)
 
-            //otherChild.nkeys -= 1
             otherChild.setNkeys(otherChild.nkeys()-1)
         }
     }
-    
 }
 
 func merge(
@@ -476,8 +667,6 @@ func merge(
     }
 
     for i := sIndex-1; i < parent.nkeys()-1; i++ {
-        //parent.keys[i] = parent.keys[i+1]
-        //parent.children[i+1] = parent.children[i+2]
         parent.setKeyOffset(i,parent.keyOffset(i+1))
     }
     parent.setNkeys(parent.nkeys()-1)
@@ -499,7 +688,6 @@ func mergeInner(
     level uint32,
 ){
     childKey := parent.key(0)
-    //first.keys[first.nkeys] = parent.keys[sIndex-1]
     first.addKC(
         first.nkeys(),
         parent.klen(sIndex-1),
@@ -509,8 +697,6 @@ func mergeInner(
     first.setNkeys(first.nkeys()+1)
 
     for i := uint16(0); i < second.nkeys(); i++ {
-        //first.keys[first.nkeys] = second.keys[i]
-        //first.children[first.nkeys] = second.children[i]
         first.addKC(
             first.nkeys(),
             second.klen(i),
@@ -519,11 +705,8 @@ func mergeInner(
         )
         first.setNkeys(first.nkeys()+1)
     }
-    //first.children[first.nkeys] = second.children[second.nkeys]
 
     for i := sIndex-1; i < parent.nkeys()-1; i++ {
-        //parent.keys[i] = parent.keys[i+1]
-        //parent.children[i+1] = parent.children[i+2]
         parent.setKeyOffset(i, parent.keyOffset(i+1))
     }
     parent.setNkeys(parent.nkeys()-1)
@@ -568,7 +751,6 @@ func deleteInner(node *NodeByte, key []byte){
         temp = temp.children(0)
     }
 
-    //node.keys[index] = newkey
     node.addKC(
         index,
         uint16(len(newkey)),
@@ -578,14 +760,30 @@ func deleteInner(node *NodeByte, key []byte){
     node.setKeyOffset(node.nkeys(), node.keyOffset(node.nkeys()+1))
 }
 
-func PrintTree(node *NodeByte, level int){
+func printTree(node *NodeByte, level int){
     fmt.Print(level, "  ")
-    fmt.Println(node.data[:OFF_FKL], "\t",node.data[OFF_FKL:80])
+    fmt.Println(node.data[:OFF_FKEY], "\t",node.data[OFF_FKEY:80])
     if(node.isLeaf() == true){
         return
     }
 
     for i := 0; i < int(node.nkeys()+1); i++{
-        PrintTree(node.children(uint16(i)), level+1)
+        printTree(node.children(uint16(i)), level+1)
     }
+}
+
+func Insert(key []byte, value []byte){
+    insertLeaf(rootByte, key, value, 0)
+}
+
+func Delete(key []byte){
+    deleteLeaf(rootByte, key, 0)
+}
+
+func Update(key []byte, value []byte){
+    update(rootByte, key, value, 0)
+}
+
+func Print(){
+    printTree(rootByte, 0)
 }

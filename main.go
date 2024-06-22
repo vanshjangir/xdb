@@ -13,18 +13,21 @@ func main(){
     v = append(v, 100)
     
     store.CreateByte()
-    store.Insert(store.RootByte, append(k, 5), v, 0)
-    store.Insert(store.RootByte, append(k, 15), v, 0)
-    store.Insert(store.RootByte, append(k, 25), v, 0)
-    store.Insert(store.RootByte, append(k, 35), v, 0)
-    store.Insert(store.RootByte, append(k, 45), v, 0)
-    store.Insert(store.RootByte, append(k, 55), v, 0)
-    store.Insert(store.RootByte, append(k, 65), v, 0)
-    store.Insert(store.RootByte, append(k, 75), v, 0)
-    store.Insert(store.RootByte, append(k, 85), v, 0)
-    store.Insert(store.RootByte, append(k, 95), v, 0)
+    store.MmapInit()
+    store.Insert(append(k, 05), v)
+    store.Insert(append(k, 15), v)
+    store.Insert(append(k, 25), v)
+    store.Insert(append(k, 35), v)
+    store.Insert(append(k, 45), v)
+    store.Insert(append(k, 55), v)
+    store.Insert(append(k, 65), v)
+    store.Insert(append(k, 75), v)
+    store.Insert(append(k, 85), v)
+    store.Insert(append(k, 95), v)
+   
+    store.Delete(append(k, 85))
+    var s []byte
+    store.Update(append(k, 95), append(s, 200))
 
-    store.Delete(store.RootByte, append(k, 15), 0)
-
-    store.PrintTree(store.RootByte, 0)
+    store.Print()
 }
