@@ -30,33 +30,30 @@ type NodeByte struct{
     selfPtr uint64
 }
 
-var FILE [100000]byte
-var curOffset uint64 = 100
-var rootByte *NodeByte
-var altRootByte *NodeByte
-var rootOffset uint64 = 0
-var altRootOffset uint64 = 0
+var self *KV             // kv pointer to access disk
+var rootByte *NodeByte      // root node of the b+tree
+var altRootByte *NodeByte   // alternate root node for copy on write
+var rootOffset uint64       // offset of root node in the main db file
+var altRootOffset uint64    // alternate offset of root node for copy on write
 
 func getNodeByte() (*NodeByte, uint64){
     var node = new(NodeByte)
-    
-    node.data = FILE[curOffset:]
-    node.selfPtr = curOffset
+    var offset uint64
+    var err error
+
+    node.data, offset, err = self.newpage()
+    if(err != nil){
+        fmt.Println("cannot allocate new page")
+        return nil, 0
+    }
+    node.selfPtr = offset
     node.setKeyOffset(0,OFF_FKEY)
     node.setNkeys(0)
     
-    off := curOffset
-    curOffset += 100
-    return node, off
+    return node, offset
 }
 
-func tempNode(offset uint16, size uint64) (*NodeByte){
-    var node = new(NodeByte)
-    node.data = FILE[offset:]
-    return node
-}
-
-func CreateByte(){
+func createRoot(){
     fmt.Println("root created")
     rootByte, rootOffset = getNodeByte()
     rootByte.setType(TYPE_ROOT_L)
@@ -96,7 +93,7 @@ func makeByteCopy(node *NodeByte) (*NodeByte, uint64){
 func changeRootByte(){
     rootByte = altRootByte
     rootOffset = altRootOffset
-    binary.LittleEndian.PutUint64(FILE[:], rootOffset)
+    setRootDisk(self.page(0), rootOffset)
 }
 
 func (node *NodeByte) nodetype() uint16{
@@ -168,7 +165,7 @@ func (node *NodeByte) cptr(index uint16) uint64{
 func (node *NodeByte) children(index uint16) *NodeByte{
     chOffset := node.cptr(index)
     chNode,_ := getNodeByte()
-    chNode.data = FILE[chOffset:]
+    chNode.data = self.page(chOffset)
     return chNode
 }
 
@@ -770,20 +767,4 @@ func printTree(node *NodeByte, level int){
     for i := 0; i < int(node.nkeys()+1); i++{
         printTree(node.children(uint16(i)), level+1)
     }
-}
-
-func Insert(key []byte, value []byte){
-    insertLeaf(rootByte, key, value, 0)
-}
-
-func Delete(key []byte){
-    deleteLeaf(rootByte, key, 0)
-}
-
-func Update(key []byte, value []byte){
-    update(rootByte, key, value, 0)
-}
-
-func Print(){
-    printTree(rootByte, 0)
 }
