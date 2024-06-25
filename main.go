@@ -13,6 +13,7 @@ func main(){
     v = append(v, 100)
 
     var kv store.KV
+    fmt.Println(k)
     kv.Create("files/xdb")
 
     kv.Insert(append(k, 05), v)

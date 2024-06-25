@@ -11,6 +11,8 @@ type KV struct{
     fp *os.File
     fSize uint64
     mSize uint64
+    flushed uint64
+    nAllocPages uint64
     data [][]byte
 }
 
@@ -30,6 +32,7 @@ func (kv *KV) Load(fileName string){
 func (kv *KV) loadMeta(){
     metaPage := kv.page(0)
     rootOffset = binary.LittleEndian.Uint64(metaPage[:])
+    kv.flushed = binary.LittleEndian.Uint64(metaPage[8:])
     rootByte = new(NodeByte)
     rootByte.data = kv.page(rootOffset)
     rootByte.selfPtr = rootOffset
@@ -38,11 +41,14 @@ func (kv *KV) loadMeta(){
 func (kv *KV) setMeta(){
     metaPage := kv.page(0)
     binary.LittleEndian.PutUint64(metaPage[:], 4096)
-    binary.LittleEndian.PutUint16(metaPage[8:], TREE_PAGE_SIZE)
+    binary.LittleEndian.PutUint64(metaPage[8:], 1)
+    kv.flushed = 1
 }
 
-func setRootDisk(metaPage []byte, ptr uint64){
-    binary.LittleEndian.PutUint64(metaPage[:], ptr)
+func (kv *KV) updateMeta(){
+    metaPage := kv.page(0)
+    binary.LittleEndian.PutUint64(metaPage[:], rootOffset)
+    binary.LittleEndian.PutUint64(metaPage[8:], kv.flushed)
 }
 
 func (kv *KV) mapFile(fileName string){
@@ -127,26 +133,49 @@ func (kv *KV) page(offset uint64) []byte {
 }
 
 func (kv *KV) newpage() ([]byte, uint64, error){
-    if(kv.fSize == kv.mSize){
+
+    kv.nAllocPages += 1
+    if((kv.flushed + kv.nAllocPages)*TREE_PAGE_SIZE >= kv.fSize){
+        if err := syscall.Fallocate(
+            int(kv.fp.Fd()), 0, int64(kv.fSize),
+            int64(kv.fSize),
+        ); err != nil {
+
+        }else{
+            kv.fSize += kv.fSize
+        }
+    }
+    
+    if(kv.fSize >= kv.mSize){
         err := kv.extendMap()
         if(err != nil){
             return nil, 0, err
         }
     }
 
-    err := syscall.Fallocate(
-        int(kv.fp.Fd()), 0, int64(kv.fSize),
-        TREE_PAGE_SIZE,
-    )
-    if(err != nil){
-        return nil, 0, err
-    }
+    offset := (kv.flushed + kv.nAllocPages - 1)*TREE_PAGE_SIZE
+    pageByte := kv.page(offset)
 
-    kv.fSize += TREE_PAGE_SIZE
-    binary.LittleEndian.PutUint64(kv.data[0][8:], kv.fSize)
-    pageByte := kv.page(kv.fSize-TREE_PAGE_SIZE)
+    return pageByte, offset, nil
+}
 
-    return pageByte, kv.fSize-TREE_PAGE_SIZE, nil
+func (kv *KV) flush(){
+     if err := kv.fp.Sync(); err != nil {
+         fmt.Println("ERROR in flush/Sync", err)
+         os.Exit(1)
+     }
+
+     rootOffset = altRootOffset
+     rootByte = altRootByte
+     kv.flushed += kv.nAllocPages
+     kv.nAllocPages = 0
+
+     kv.updateMeta()
+
+     if err := kv.fp.Sync(); err != nil {
+         fmt.Println("ERROR in flush/Sync", err)
+         os.Exit(1)
+     }
 }
 
 func (kv *KV) Insert(key []byte, value []byte){

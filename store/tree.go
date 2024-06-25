@@ -57,6 +57,9 @@ func createRoot(){
     fmt.Println("root created")
     rootByte, rootOffset = getNodeByte()
     rootByte.setType(TYPE_ROOT_L)
+    altRootOffset = rootOffset
+    altRootByte = rootByte
+    self.flush()
 }
 
 func makeByteCopy(node *NodeByte) (*NodeByte, uint64){
@@ -88,12 +91,6 @@ func makeByteCopy(node *NodeByte) (*NodeByte, uint64){
     }
 
     return newByte,offset
-}
-
-func changeRootByte(){
-    rootByte = altRootByte
-    rootOffset = altRootOffset
-    setRootDisk(self.page(0), rootOffset)
 }
 
 func (node *NodeByte) nodetype() uint16{
@@ -291,7 +288,7 @@ func insertLeaf(node *NodeByte, key []byte, value []byte, level uint32){
         if(cr == 0){
             node.addKV(index, uint16(len(key)), key, uint16(len(value)), value)
             node.setKeyOffset(node.nkeys(), node.keyOffset(node.nkeys()+1))
-            changeRootByte();
+            self.flush();
             return
         }
     }
@@ -318,7 +315,7 @@ func insertLeaf(node *NodeByte, key []byte, value []byte, level uint32){
         }
     }
 
-    changeRootByte();
+    self.flush();
 }
 
 func update(node *NodeByte, key []byte, value []byte, level uint32){
@@ -349,7 +346,7 @@ func update(node *NodeByte, key []byte, value []byte, level uint32){
             break
         }
     }
-    changeRootByte();
+    self.flush();
 }
 
 func insertInner(
@@ -510,7 +507,7 @@ func deleteLeaf(node *NodeByte, key []byte, level uint32){
         fill(node, childKey, isLeaf, level)
     }
 
-    changeRootByte()
+    self.flush()
 }
 
 func fill(child *NodeByte, childKey []byte, isLeaf bool, level uint32){
