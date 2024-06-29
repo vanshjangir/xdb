@@ -1,4 +1,4 @@
-package store
+package storage
 
 import (
 	"fmt"
@@ -7,12 +7,18 @@ import (
     "encoding/binary"
 )
 
+const (
+    INITIAL_ROOT_OFF = 8192
+    FL_PAGE_OFF = 4096
+)
+
 type KV struct{
     fp *os.File
     fSize uint64
     mSize uint64
     flushed uint64
     nAllocPages uint64
+    nReusedPages uint64
     data [][]byte
 }
 
@@ -20,6 +26,7 @@ func (kv *KV) Create(fileName string){
     self = kv
     kv.mapFile(fileName)
     kv.setMeta()
+    createFreeList()
     createRoot()
 }
 
@@ -33,16 +40,20 @@ func (kv *KV) loadMeta(){
     metaPage := kv.page(0)
     rootOffset = binary.LittleEndian.Uint64(metaPage[:])
     kv.flushed = binary.LittleEndian.Uint64(metaPage[8:])
+
     rootByte = new(NodeByte)
     rootByte.data = kv.page(rootOffset)
     rootByte.selfPtr = rootOffset
+
+    freeList = new(NodeFreeList)
+    freeList.data = kv.page(FL_PAGE_OFF)
 }
 
 func (kv *KV) setMeta(){
     metaPage := kv.page(0)
-    binary.LittleEndian.PutUint64(metaPage[:], 4096)
-    binary.LittleEndian.PutUint64(metaPage[8:], 1)
-    kv.flushed = 1
+    binary.LittleEndian.PutUint64(metaPage[:], INITIAL_ROOT_OFF)
+    binary.LittleEndian.PutUint64(metaPage[8:], 2)
+    kv.flushed = 2
 }
 
 func (kv *KV) updateMeta(){
@@ -75,7 +86,7 @@ func (kv *KV) mapFile(fileName string){
         os.Exit(1)
     }
 
-    kv.fSize = max(uint64(fileInfo.Size()), TREE_PAGE_SIZE)
+    kv.fSize = max(uint64(fileInfo.Size()), 2*TREE_PAGE_SIZE)
     kv.mSize = 2*kv.fSize
 
     fileChunk, err = syscall.Mmap(
@@ -134,15 +145,28 @@ func (kv *KV) page(offset uint64) []byte {
 
 func (kv *KV) newpage() ([]byte, uint64, error){
 
+    var pageByte []byte
+    var offset uint64
+
+    if(popList != nil && popList.noffs() > 0){
+        var err error
+        offset, err = popList.pop()
+        kv.nReusedPages += 1
+        if(err == nil){
+            goto out
+        }
+    }
+
     kv.nAllocPages += 1
     if((kv.flushed + kv.nAllocPages)*TREE_PAGE_SIZE >= kv.fSize){
+        allocSize := max(kv.fSize, (kv.nAllocPages+kv.flushed)*TREE_PAGE_SIZE)
         if err := syscall.Fallocate(
             int(kv.fp.Fd()), 0, int64(kv.fSize),
-            int64(kv.fSize),
+            int64(allocSize),
         ); err != nil {
 
         }else{
-            kv.fSize += kv.fSize
+            kv.fSize += allocSize
         }
     }
     
@@ -153,40 +177,63 @@ func (kv *KV) newpage() ([]byte, uint64, error){
         }
     }
 
-    offset := (kv.flushed + kv.nAllocPages - 1)*TREE_PAGE_SIZE
-    pageByte := kv.page(offset)
+    offset = (kv.flushed + kv.nAllocPages - 1)*TREE_PAGE_SIZE
 
+out:
+    pageByte = kv.page(offset)
     return pageByte, offset, nil
 }
 
+func (kv *KV) updateFreeList(){
+    if(popList == nil || pushList == nil){
+        return
+    }
+
+    freeList.setNoffs(popList.noffs())
+    for{
+        if(pushList.noffs() == 0){
+            break
+        }
+        offset, _ := pushList.pop()
+        freeList.push(offset)
+    }
+
+    popList.setNoffs(0)
+    pushList.setNoffs(0)
+}
+
 func (kv *KV) flush(){
-     if err := kv.fp.Sync(); err != nil {
-         fmt.Println("ERROR in flush/Sync", err)
-         os.Exit(1)
-     }
+    if err := kv.fp.Sync(); err != nil {
+        fmt.Println("ERROR in flush/Sync", err)
+        os.Exit(1)
+    }
 
-     rootOffset = altRootOffset
-     rootByte = altRootByte
-     kv.flushed += kv.nAllocPages
-     kv.nAllocPages = 0
+    rootOffset = altRootOffset
+    rootByte = altRootByte
+    kv.flushed += kv.nAllocPages
+    kv.nAllocPages = 0
 
-     kv.updateMeta()
+    kv.updateMeta()
+    kv.updateFreeList()
 
-     if err := kv.fp.Sync(); err != nil {
-         fmt.Println("ERROR in flush/Sync", err)
-         os.Exit(1)
-     }
+    if err := kv.fp.Sync(); err != nil {
+        fmt.Println("ERROR in flush/Sync", err)
+        os.Exit(1)
+    }
 }
 
 func (kv *KV) Insert(key []byte, value []byte){
+    makeFreeListCopy()
     insertLeaf(rootByte, key, value, 0)
 }
 
 func (kv *KV) Delete(key []byte){
+    makeFreeListCopy()
     deleteLeaf(rootByte, key, 0)
 }
 
 func (kv *KV) Update(key []byte, value []byte){
+    makeFreeListCopy()
     update(rootByte, key, value, 0)
 }
 

@@ -2,7 +2,7 @@ package main
 
 import (
     "fmt"
-    "github.com/vanshjangir/xdb/store"
+    "github.com/vanshjangir/xdb/storage"
 )
 
 func main(){
@@ -12,8 +12,7 @@ func main(){
 
     v = append(v, 100)
 
-    var kv store.KV
-    fmt.Println(k)
+    var kv storage.KV
     kv.Create("files/xdb")
 
     kv.Insert(append(k, 05), v)
@@ -26,8 +25,6 @@ func main(){
     kv.Insert(append(k, 75), v)
     kv.Insert(append(k, 85), v)
     kv.Insert(append(k, 95), v)
-
-    kv.Delete(append(k, 95))
    
     kv.Print()
 }

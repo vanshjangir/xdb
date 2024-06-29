@@ -1,4 +1,4 @@
-package store
+package storage
 
 import (
 	"bytes"
@@ -30,7 +30,7 @@ type NodeByte struct{
     selfPtr uint64
 }
 
-var self *KV             // kv pointer to access disk
+var self *KV                // kv pointer to access disk
 var rootByte *NodeByte      // root node of the b+tree
 var altRootByte *NodeByte   // alternate root node for copy on write
 var rootOffset uint64       // offset of root node in the main db file
@@ -89,6 +89,8 @@ func makeByteCopy(node *NodeByte) (*NodeByte, uint64){
         }
         newByte.setNkeys(i+1)
     }
+
+    pushList.push(node.selfPtr)
 
     return newByte,offset
 }
