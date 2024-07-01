@@ -21,8 +21,9 @@ const (
     OFF_NKEYS = 2
     OFF_MAP = 4
     OFF_NEXT = 4 + 2*(M+1)
-    OFF_FCP = 4 + 2*(M+1)
-    OFF_FKEY = 4 + 2*(M+1) + 8
+    OFF_PREV = 4 + 2*(M+1) + 8
+    OFF_FCP = 4 + 2*(M+1) + 8
+    OFF_FKEY = 4 + 2*(M+1) + 16
 )
 
 type NodeByte struct{
@@ -49,7 +50,7 @@ func getNodeByte() (*NodeByte, uint64){
     node.selfPtr = offset
     node.setKeyOffset(0,OFF_FKEY)
     node.setNkeys(0)
-    
+
     return node, offset
 }
 
@@ -91,6 +92,11 @@ func makeByteCopy(node *NodeByte) (*NodeByte, uint64){
     }
 
     pushList.push(node.selfPtr)
+    if(node.isLeaf()){
+        newByte.setNext(node.nextPtr())
+        newByte.setPrev(node.prevPtr())
+        self.allocPages = append(self.allocPages, offset)
+    }
 
     return newByte,offset
 }
@@ -163,9 +169,52 @@ func (node *NodeByte) cptr(index uint16) uint64{
 
 func (node *NodeByte) children(index uint16) *NodeByte{
     chOffset := node.cptr(index)
-    chNode,_ := getNodeByte()
+    chNode := new(NodeByte)
     chNode.data = self.page(chOffset)
+    chNode.selfPtr = chOffset
     return chNode
+}
+
+func (node *NodeByte) nextPtr() uint64 {
+    if(node.isLeaf() == false){
+        return 0
+    }
+    return binary.LittleEndian.Uint64(node.data[OFF_NEXT:])
+}
+
+func (node *NodeByte) nextNode() *NodeByte {
+    if(node.isLeaf() == false){
+        return nil
+    }
+    nextOff := node.nextPtr()
+    if(nextOff == 0){
+        return nil
+    }
+    nextNode := new(NodeByte)
+    nextNode.data = self.page(nextOff)
+    nextNode.selfPtr = nextOff
+    return nextNode
+}
+
+func (node *NodeByte) prevPtr() uint64 {
+    if(node.isLeaf() == false){
+        return 0
+    }
+    return binary.LittleEndian.Uint64(node.data[OFF_PREV:])
+}
+
+func (node *NodeByte) prevNode() *NodeByte {
+    if(node.isLeaf() == false){
+        return nil
+    }
+    prevOff := node.prevPtr()
+    if(prevOff == 0){
+        return nil
+    }
+    prevNode := new(NodeByte)
+    prevNode.data = self.page(prevOff)
+    prevNode.selfPtr = prevOff
+    return prevNode
 }
 
 func (node *NodeByte) setType(TYPE uint16){
@@ -241,6 +290,10 @@ func (node *NodeByte) setNext(offptr uint64){
     binary.LittleEndian.PutUint64(node.data[OFF_NEXT:], offptr)
 }
 
+func (node *NodeByte) setPrev(offptr uint64){
+    binary.LittleEndian.PutUint64(node.data[OFF_PREV:], offptr)
+}
+
 func findParent(
     node *NodeByte,
     key []byte,
@@ -272,8 +325,11 @@ func insertLeaf(node *NodeByte, key []byte, value []byte, level uint32){
     if(node.isLeaf() == false){
         for index = 0; index < node.nkeys(); index++ {
             cr := bytes.Compare(node.key(index), key)
-            if(cr >= 0){
+            if(cr > 0){
                 break
+            }
+            if(cr == 0){
+                return
             }
         }
         newChild, offset := makeByteCopy(node.children(index))
@@ -428,6 +484,9 @@ func splitLeaf(node *NodeByte) ([]byte, uint64, uint64){
     first, firstPtr := getNodeByte()
     second, secondPtr := getNodeByte()
 
+    self.allocPages = append(self.allocPages, firstPtr)
+    self.allocPages = append(self.allocPages, secondPtr)
+
     first.setType(TYPE_L)
     second.setType(TYPE_L)
 
@@ -455,6 +514,10 @@ func splitLeaf(node *NodeByte) ([]byte, uint64, uint64){
     }
 
     first.setNext(secondPtr)
+    first.setPrev(node.prevPtr())
+    second.setPrev(firstPtr)
+    second.setNext(node.nextPtr())
+
     return node.key(MID), firstPtr, secondPtr
 }
 
@@ -754,6 +817,82 @@ func deleteInner(node *NodeByte, key []byte){
         node.cptr(index+1),
     )
     node.setKeyOffset(node.nkeys(), node.keyOffset(node.nkeys()+1))
+}
+
+func qget(node *NodeByte, key []byte, level uint32) []byte{
+    var index uint16
+    if(node.isLeaf() == false){
+        for index = 0; index < node.nkeys(); index++ {
+            cr := bytes.Compare(node.key(index), key)
+            if(cr > 0){
+                break
+            }
+        }
+        return qget(node.children(index), key, level+1)
+    }
+
+    for index = 0; index < node.nkeys(); index++ {
+        cr := bytes.Compare(node.key(index), key)
+        if(cr == 0){
+            return node.value(index)
+        }
+    }
+
+    return nil
+}
+
+func qrange(node *NodeByte, keyStart []byte, keyEnd []byte) [][]byte{
+    var index uint16
+    if(node.isLeaf() == false){
+        for index = 0; index < node.nkeys(); index++ {
+            cr := bytes.Compare(node.key(index), keyStart)
+            if(cr > 0){
+                break
+            }
+        }
+        return qrange(node.children(index), keyStart, keyEnd)
+    }
+
+    for index = 0; index < node.nkeys(); index++ {
+        cr := bytes.Compare(node.key(index), keyStart)
+        if(cr == 0){
+            break
+        }
+        if(cr > 0){
+            index = min(index-1, 0)
+            break;
+        }
+    }
+
+    var values [][]byte
+    values = traverse(values, node, keyEnd, index)
+    return values
+}
+
+func traverse(
+    values [][]byte, node *NodeByte,
+    keyEnd []byte, index uint16,
+) [][]byte{
+
+    for i := index; i < node.nkeys(); i++ {
+        cr := bytes.Compare(node.key(i), keyEnd)
+        if(cr > 0){
+            return values
+        }
+
+        v := node.value(i);
+        values = append(values, v);
+        if(cr == 0){
+            return values
+        }
+    }
+
+    nextNode := node.nextNode()
+    if(nextNode == nil || nextNode.data == nil){
+        return values
+    }else{
+        return traverse(values, nextNode, keyEnd, 0)
+    }
 }
 
 func printTree(node *NodeByte, level int){

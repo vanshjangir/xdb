@@ -17,9 +17,10 @@ type KV struct{
     fSize uint64
     mSize uint64
     flushed uint64
-    nAllocPages uint64
+    nNewPages uint64
     nReusedPages uint64
     data [][]byte
+    allocPages []uint64
 }
 
 func (kv *KV) Create(fileName string){
@@ -34,6 +35,20 @@ func (kv *KV) Load(fileName string){
     self = kv
     kv.mapFile(fileName)
     kv.loadMeta()
+}
+
+func (kv *KV) switchTree(){
+    self = kv
+    metaPage := kv.page(0)
+    rootOffset = binary.LittleEndian.Uint64(metaPage[:])
+    rootByte.data = kv.page(rootOffset)
+    rootByte.selfPtr = rootOffset
+    
+    altRootByte = rootByte
+    altRootOffset = rootOffset
+    altRootByte.selfPtr = rootOffset
+
+    kv.nNewPages = 0
 }
 
 func (kv *KV) loadMeta(){
@@ -157,9 +172,9 @@ func (kv *KV) newpage() ([]byte, uint64, error){
         }
     }
 
-    kv.nAllocPages += 1
-    if((kv.flushed + kv.nAllocPages)*TREE_PAGE_SIZE >= kv.fSize){
-        allocSize := max(kv.fSize, (kv.nAllocPages+kv.flushed)*TREE_PAGE_SIZE)
+    kv.nNewPages += 1
+    if((kv.flushed + kv.nNewPages)*TREE_PAGE_SIZE >= kv.fSize){
+        allocSize := max(kv.fSize, (kv.nNewPages+kv.flushed)*TREE_PAGE_SIZE)
         if err := syscall.Fallocate(
             int(kv.fp.Fd()), 0, int64(kv.fSize),
             int64(allocSize),
@@ -177,7 +192,7 @@ func (kv *KV) newpage() ([]byte, uint64, error){
         }
     }
 
-    offset = (kv.flushed + kv.nAllocPages - 1)*TREE_PAGE_SIZE
+    offset = (kv.flushed + kv.nNewPages - 1)*TREE_PAGE_SIZE
 
 out:
     pageByte = kv.page(offset)
@@ -202,6 +217,24 @@ func (kv *KV) updateFreeList(){
     pushList.setNoffs(0)
 }
 
+func (kv *KV) updateLeafLink(){
+    for i := 0; i < len(kv.allocPages); i++ {
+        node := new(NodeByte)
+        node.data = kv.page(kv.allocPages[i])
+
+        prev := node.prevNode()
+        if(prev != nil){
+            prev.setNext(kv.allocPages[i])
+        }
+
+        next := node.nextNode()
+        if(next != nil){
+            next.setPrev(kv.allocPages[i])
+        }
+    }
+    kv.allocPages = kv.allocPages[:0]
+}
+
 func (kv *KV) flush(){
     if err := kv.fp.Sync(); err != nil {
         fmt.Println("ERROR in flush/Sync", err)
@@ -210,9 +243,10 @@ func (kv *KV) flush(){
 
     rootOffset = altRootOffset
     rootByte = altRootByte
-    kv.flushed += kv.nAllocPages
-    kv.nAllocPages = 0
+    kv.flushed += kv.nNewPages
+    kv.nNewPages = 0
 
+    kv.updateLeafLink()
     kv.updateMeta()
     kv.updateFreeList()
 
@@ -223,20 +257,36 @@ func (kv *KV) flush(){
 }
 
 func (kv *KV) Insert(key []byte, value []byte){
+    kv.switchTree()
     makeFreeListCopy()
     insertLeaf(rootByte, key, value, 0)
 }
 
 func (kv *KV) Delete(key []byte){
+    kv.switchTree()
     makeFreeListCopy()
     deleteLeaf(rootByte, key, 0)
 }
 
 func (kv *KV) Update(key []byte, value []byte){
+    kv.switchTree()
     makeFreeListCopy()
     update(rootByte, key, value, 0)
 }
 
+func (kv *KV) Get(key []byte) []byte{
+    kv.switchTree()
+    makeFreeListCopy()
+    return qget(rootByte, key, 0)
+}
+
+func (kv *KV) Range(keyStart []byte, keyEnd []byte) [][]byte {
+    kv.switchTree()
+    makeFreeListCopy()
+    return qrange(rootByte, keyStart, keyEnd)
+}
+
 func (kv *KV) Print(){
+    kv.switchTree()
     printTree(rootByte, 0)
 }
