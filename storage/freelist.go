@@ -1,8 +1,8 @@
 package storage
 
 import (
-	"encoding/binary"
-	"fmt"
+    "encoding/binary"
+    "fmt"
 )
 
 const (

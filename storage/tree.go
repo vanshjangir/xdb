@@ -1,9 +1,9 @@
 package storage
 
 import (
-	"bytes"
-	"encoding/binary"
-	"fmt"
+    "bytes"
+    "encoding/binary"
+    "fmt"
 )
 
 const M = 3
@@ -104,7 +104,7 @@ func makeByteCopy(node *NodeByte) (*NodeByte, uint64){
     if(node.isLeaf()){
         newByte.setNext(node.nextPtr())
         newByte.setPrev(node.prevPtr())
-        self.allocPages = append(self.allocPages, offset)
+        self.uLeafPages = append(self.uLeafPages, offset)
     }
 
     return newByte,offset
@@ -355,7 +355,7 @@ func insertLeaf(node *NodeByte, key []byte, value []byte, level uint32){
         if(cr == 0){
             node.addKV(index, uint16(len(key)), key, uint16(len(value)), value)
             node.setKeyOffset(node.nkeys(), node.keyOffset(node.nkeys()+1))
-            self.flush();
+            self.changeRoot();
             return
         }
     }
@@ -382,7 +382,7 @@ func insertLeaf(node *NodeByte, key []byte, value []byte, level uint32){
         }
     }
 
-    self.flush();
+    self.changeRoot();
 }
 
 func update(node *NodeByte, key []byte, value []byte, level uint32){
@@ -413,7 +413,7 @@ func update(node *NodeByte, key []byte, value []byte, level uint32){
             break
         }
     }
-    self.flush();
+    self.changeRoot();
 }
 
 func insertInner(
@@ -493,8 +493,8 @@ func splitLeaf(node *NodeByte) ([]byte, uint64, uint64){
     first, firstPtr := getNodeByte()
     second, secondPtr := getNodeByte()
 
-    self.allocPages = append(self.allocPages, firstPtr)
-    self.allocPages = append(self.allocPages, secondPtr)
+    self.uLeafPages = append(self.uLeafPages, firstPtr)
+    self.uLeafPages = append(self.uLeafPages, secondPtr)
 
     first.setType(TYPE_L)
     second.setType(TYPE_L)
@@ -581,7 +581,7 @@ func deleteLeaf(node *NodeByte, key []byte, level uint32){
         fill(node, childKey, isLeaf, level)
     }
 
-    self.flush()
+    self.changeRoot()
 }
 
 func fill(child *NodeByte, childKey []byte, isLeaf bool, level uint32){

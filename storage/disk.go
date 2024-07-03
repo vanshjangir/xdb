@@ -1,8 +1,8 @@
 package storage
 
 import (
-	"fmt"
-	"os"
+    "fmt"
+    "os"
     "syscall"
     "encoding/binary"
 )
@@ -17,7 +17,17 @@ const (
     IDX_FL_OFF = 4096
     IDX_FIRST_OFF = 8192
     IDX_META_FIRST_PAIR = 24
+
+    PREV_LINK = 1
+    NEXT_LINK = 2
 )
+
+type Transaction struct{
+    rootOffset uint64
+    index map[string]uint64
+    oldLeafLinks map[uint64][2]uint64
+    afterAllocPages []uint64
+}
 
 type KV struct{
     fp *os.File
@@ -25,9 +35,8 @@ type KV struct{
     mSize uint64
     flushed uint64
     nNewPages uint64
-    nReusedPages uint64
     data [][]byte
-    allocPages []uint64
+    uLeafPages []uint64
 
     rootByte *NodeByte      // root node of the b+tree
     altRootByte *NodeByte   // alternate root node for copy on write
@@ -37,10 +46,18 @@ type KV struct{
     freeList *NodeFreeList
     pushList *NodeFreeList
     popList *NodeFreeList
+
+    tx Transaction
 }
 
 func (kv *KV) Create(fileName string){
     self = kv
+    if(kv.tx.index == nil){
+        kv.tx.index = make(map[string]uint64)
+    }
+    if(kv.tx.oldLeafLinks == nil){
+        kv.tx.oldLeafLinks = make(map[uint64][2]uint64)
+    }
     kv.mapFile(fileName)
     kv.setMeta()
     createFreeList()
@@ -51,6 +68,7 @@ func (kv *KV) Load(fileName string){
     self = kv
     kv.mapFile(fileName)
     kv.loadMeta()
+    kv.tx.rootOffset = kv.rootOffset
 }
 
 func (kv *KV) loadMeta(){
@@ -76,14 +94,19 @@ func (kv *KV) setMeta(){
 
 func (kv *KV) updateMeta(){
     metaPage := kv.page(0)
-    self.rootOffset = self.altRootOffset
-    self.rootByte = self.altRootByte
-    binary.LittleEndian.PutUint64(metaPage[8:], self.rootOffset)
+    kv.tx.rootOffset = self.rootOffset
+    binary.LittleEndian.PutUint64(metaPage[8:], kv.tx.rootOffset)
     binary.LittleEndian.PutUint64(metaPage[16:], kv.flushed)
 }
 
 func (kv *KV) CreateIdx(fileName string, index map[string]uint64){
     self = kv
+    if(kv.tx.index == nil){
+        kv.tx.index = make(map[string]uint64)
+    }
+    if(kv.tx.oldLeafLinks == nil){
+        kv.tx.oldLeafLinks = make(map[uint64][2]uint64)
+    }
     selfIdx = index
     kv.mapFile(fileName)
     kv.setMetaIdx()
@@ -96,6 +119,10 @@ func (kv *KV) LoadIdx(fileName string, index map[string]uint64){
     selfIdx = index
     kv.mapFile(fileName)
     kv.loadMetaIdx(index)
+    kv.tx.index = make(map[string]uint64)
+    for col, off := range(selfIdx){
+        kv.tx.index[col] = off
+    }
 }
 
 func (kv *KV) loadMetaIdx(index map[string]uint64){
@@ -109,6 +136,8 @@ func (kv *KV) loadMetaIdx(index map[string]uint64){
         index[col] = key
         offset += 2 + int(clen) + 8
     }
+    kv.freeList = new(NodeFreeList)
+    kv.freeList.data = kv.page(IDX_FL_OFF)
 }
 
 func (kv *KV) setMetaIdx(){
@@ -140,16 +169,9 @@ func (kv *KV) updateMetaIdx(){
     
     offset := IDX_META_FIRST_PAIR
     for col, rOff := range(selfIdx){
-        clen := len(col)
-        offset += 2 + int(clen)
-        
-        if(rOff == self.rootOffset){
-            self.rootByte = self.altRootByte
-            self.rootOffset = self.altRootOffset
-            selfIdx[col] = self.altRootOffset
-            binary.LittleEndian.PutUint64(metaPage[offset:], self.altRootOffset)
-            break
-        }
+        offset += 2 + len(col)
+        kv.tx.index[col] = rOff
+        binary.LittleEndian.PutUint64(metaPage[offset:], rOff)
         offset += 8
     }
 }
@@ -243,7 +265,6 @@ func (kv *KV) newpage() ([]byte, uint64, error){
     if(kv.popList != nil && kv.popList.noffs() > 0){
         var err error
         offset, err = kv.popList.pop()
-        kv.nReusedPages += 1
         if(err == nil){
             goto out
         }
@@ -270,6 +291,7 @@ func (kv *KV) newpage() ([]byte, uint64, error){
     }
 
     offset = (kv.flushed + kv.nNewPages - 1)*TREE_PAGE_SIZE
+    kv.tx.afterAllocPages = append(kv.tx.afterAllocPages, offset)
 
 out:
     pageByte = kv.page(offset)
@@ -295,21 +317,89 @@ func (kv *KV) updateFreeList(){
 }
 
 func (kv *KV) updateLeafLink(){
-    for i := 0; i < len(kv.allocPages); i++ {
+    for i := 0; i < len(kv.uLeafPages); i++ {
         node := new(NodeByte)
-        node.data = kv.page(kv.allocPages[i])
+        node.data = kv.page(kv.uLeafPages[i])
 
         prev := node.prevNode()
         if(prev != nil){
-            prev.setNext(kv.allocPages[i])
+            _, exists := kv.tx.oldLeafLinks[prev.selfPtr]
+            if(exists == false){
+                var oldLink [2]uint64
+                oldLink[0] = NEXT_LINK
+                oldLink[1] = prev.nextPtr()
+                kv.tx.oldLeafLinks[prev.selfPtr] = oldLink
+            }
+            prev.setNext(kv.uLeafPages[i])
         }
 
         next := node.nextNode()
         if(next != nil){
-            next.setPrev(kv.allocPages[i])
+            _, exists := kv.tx.oldLeafLinks[next.selfPtr]
+            if(exists == false){
+                var oldLink [2]uint64
+                oldLink[0] = PREV_LINK
+                oldLink[1] = next.prevPtr()
+                kv.tx.oldLeafLinks[next.selfPtr] = oldLink
+            }
+            next.setPrev(kv.uLeafPages[i])
         }
     }
-    kv.allocPages = kv.allocPages[:0]
+    kv.uLeafPages = kv.uLeafPages[:0]
+}
+
+func (kv *KV) TxBegin(){
+    self = kv
+    if(kv.tx.index == nil){
+        kv.tx.index = make(map[string]uint64)
+    }
+    if(kv.tx.oldLeafLinks == nil){
+        kv.tx.oldLeafLinks = make(map[uint64][2]uint64)
+    }
+    kv.tx.rootOffset = kv.rootOffset
+    for col, off := range(selfIdx){
+        kv.tx.index[col] = off
+    }
+}
+
+func (kv *KV) TxCommit(){
+    self = kv
+    kv.tx.oldLeafLinks = nil
+    kv.tx.afterAllocPages = kv.tx.afterAllocPages[:0]
+    kv.flush()
+}
+
+func (kv *KV) TxRollback(){
+    self = kv
+    self.rootOffset = kv.tx.rootOffset
+    self.rootByte.data = kv.page(self.rootOffset)
+    self.rootByte.selfPtr = self.rootOffset
+
+    self.altRootByte = self.rootByte
+    self.altRootOffset = kv.tx.rootOffset
+
+    for col, off := range(kv.tx.index){
+        selfIdx[col] = off
+    }
+
+    for nodeptr, arr := range(kv.tx.oldLeafLinks){
+        node := new(NodeByte)
+        node.data = kv.page(nodeptr)
+        if(arr[0] == NEXT_LINK){
+            node.setNext(arr[1])
+        }else{
+            node.setPrev(arr[1])
+        }
+    }
+
+    kv.tx.oldLeafLinks = nil
+
+    for i := 0; i < len(kv.tx.afterAllocPages); i++ {
+        kv.pushList.push(kv.tx.afterAllocPages[i])
+    }
+
+    kv.tx.afterAllocPages = kv.tx.afterAllocPages[:0]
+    kv.flush()
 }
 
 func (kv *KV) flush(){
@@ -318,8 +408,6 @@ func (kv *KV) flush(){
         os.Exit(1)
     }
     
-    kv.updateLeafLink()
-    
     metaPage := kv.page(0)
     if(binary.LittleEndian.Uint16(metaPage[:]) == META_TYPE_IDX){
         kv.updateMetaIdx()
@@ -327,14 +415,38 @@ func (kv *KV) flush(){
         kv.updateMeta()
     }
 
-    kv.flushed += kv.nNewPages
-    kv.nNewPages = 0
-
     kv.updateFreeList()
 
     if err := kv.fp.Sync(); err != nil {
         fmt.Println("ERROR in flush/Sync", err)
         os.Exit(1)
+    }
+}
+
+func (kv *KV) changeRoot(){
+
+    kv.flushed += kv.nNewPages
+    kv.nNewPages = 0
+    kv.updateLeafLink()
+
+    metaPage := kv.page(0)
+    if(binary.LittleEndian.Uint16(metaPage[:]) == META_TYPE_IDX){
+        offset := IDX_META_FIRST_PAIR
+        for col, rOff := range(selfIdx){
+            clen := len(col)
+            offset += 2 + int(clen)
+            
+            if(rOff == self.rootOffset){
+                self.rootByte = self.altRootByte
+                self.rootOffset = self.altRootOffset
+                selfIdx[col] = self.altRootOffset
+                break
+            }
+            offset += 8
+        }
+    }else{
+        self.rootOffset = self.altRootOffset
+        self.rootByte = self.altRootByte
     }
 }
 
@@ -409,11 +521,13 @@ func (kv *KV) Range(keyStart []byte, keyEnd []byte) [][]byte {
 
 func (kv *KV) Print(){
     self = kv
-    printTree(self.rootByte, 0)
+    node := new(NodeByte)
+    node.data = kv.page(kv.tx.rootOffset)
+    printTree(node, 0)
 }
 
-func (kv *KV) PrintIndex(index map[string]uint64){
-    for _, off := range(index){
+func (kv *KV) PrintIndex(){
+    for _, off := range(kv.tx.index){
         node := new(NodeByte)
         node.data = kv.page(off)
         printTree(node, 0)

@@ -1,9 +1,9 @@
 package table
 
 import (
-	"fmt"
-	"os"
-	"github.com/vanshjangir/xdb/storage"
+    "fmt"
+    "os"
+    "github.com/vanshjangir/xdb/storage"
 )
 
 type Table struct{
@@ -81,8 +81,23 @@ func (table *Table) Range(keyStart []byte, keyEnd []byte) [][]byte {
     return table.kv.Range(keyStart, keyEnd)
 }
 
+func (table *Table) BEGIN(){
+    table.kv.TxBegin()
+    table.idxkv.TxBegin()
+}
+
+func (table *Table) COMMIT(){
+    table.kv.TxCommit()
+    table.idxkv.TxCommit()
+}
+
+func (table *Table) ROLLBACK(){
+    table.kv.TxRollback()
+    table.idxkv.TxRollback()
+}
+
 func (table *Table) Print(){
     table.kv.Print()
     fmt.Println()
-    table.idxkv.PrintIndex(table.index)
+    table.idxkv.PrintIndex()
 }
