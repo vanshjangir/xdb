@@ -1,8 +1,8 @@
 package main
 
 import (
-    "fmt"
-    "github.com/vanshjangir/xdb/storage"
+	"fmt"
+	"github.com/vanshjangir/xdb/table"
 )
 
 func main(){
@@ -10,21 +10,18 @@ func main(){
     var k []byte
     var v []byte
 
-    var kv storage.KV
-    kv.Create("files/xdb")
+    var table table.Table
+    table.CreateTable("first")
 
-    kv.Insert(append(k, 05), append(v,105))
-    kv.Insert(append(k, 15), append(v,115))
-    kv.Insert(append(k, 25), append(v,125))
-    kv.Insert(append(k, 35), append(v,135))
-    kv.Insert(append(k, 45), append(v,145))
-    kv.Insert(append(k, 55), append(v,155))
-    kv.Insert(append(k, 65), append(v,165))
-    kv.Insert(append(k, 75), append(v,175))
-    kv.Insert(append(k, 85), append(v,185))
-    kv.Insert(append(k, 95), append(v,195))
-
-   
-    kv.Print()
-    fmt.Println(kv.Range(append(k, 0), append(k, 105)))
+    table.Insert(append(k, 05), append(v,105))
+    table.Insert(append(k, 15), append(v,115))
+    table.Insert(append(k, 25), append(v,125))
+    table.Insert(append(k, 35), append(v,135))
+    table.Insert(append(k, 45), append(v,145))
+    table.Insert(append(k, 55), append(v,155))
+    table.Insert(append(k, 65), append(v,165))
+    table.Insert(append(k, 75), append(v,175))
+    table.Insert(append(k, 85), append(v,185))
+    table.Insert(append(k, 95), append(v,195))
+    table.Print()
 }

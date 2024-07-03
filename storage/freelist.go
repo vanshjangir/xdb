@@ -18,25 +18,21 @@ type NodeFreeList struct{
     data []byte
 }
 
-var freeList *NodeFreeList = nil
-var pushList *NodeFreeList = nil
-var popList *NodeFreeList = nil
-
 func createFreeList(){
-    freeList = new(NodeFreeList)
-    freeList.data = self.page(FL_PAGE_OFF)
+    self.freeList = new(NodeFreeList)
+    self.freeList.data = self.page(MAIN_FL_OFF)
 
-    freeList.setPageno(1)
-    freeList.setNoffs(0)
-    freeList.setTotal(0)
+    self.freeList.setPageno(1)
+    self.freeList.setNoffs(0)
+    self.freeList.setTotal(0)
 }
 
 func makeFreeListCopy(){
-    popList = new(NodeFreeList)
-    pushList = new(NodeFreeList)
-    popList.data = make([]byte, TREE_PAGE_SIZE)
-    pushList.data = make([]byte, TREE_PAGE_SIZE)
-    copy(popList.data[:TREE_PAGE_SIZE], freeList.data[:TREE_PAGE_SIZE])
+    self.popList = new(NodeFreeList)
+    self.pushList = new(NodeFreeList)
+    self.popList.data = make([]byte, TREE_PAGE_SIZE)
+    self.pushList.data = make([]byte, TREE_PAGE_SIZE)
+    copy(self.popList.data[:TREE_PAGE_SIZE], self.freeList.data[:TREE_PAGE_SIZE])
 }
 
 func (node *NodeFreeList) pageno() uint64{

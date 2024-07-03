@@ -31,11 +31,8 @@ type NodeByte struct{
     selfPtr uint64
 }
 
-var self *KV                // kv pointer to access disk
-var rootByte *NodeByte      // root node of the b+tree
-var altRootByte *NodeByte   // alternate root node for copy on write
-var rootOffset uint64       // offset of root node in the main db file
-var altRootOffset uint64    // alternate offset of root node for copy on write
+var self *KV                    // kv pointer to access disk
+var selfIdx map[string]uint64   // maps columns to rootoffset
 
 func getNodeByte() (*NodeByte, uint64){
     var node = new(NodeByte)
@@ -56,18 +53,30 @@ func getNodeByte() (*NodeByte, uint64){
 
 func createRoot(){
     fmt.Println("root created")
-    rootByte, rootOffset = getNodeByte()
-    rootByte.setType(TYPE_ROOT_L)
-    altRootOffset = rootOffset
-    altRootByte = rootByte
+    self.rootByte, self.rootOffset = getNodeByte()
+    self.rootByte.setType(TYPE_ROOT_L)
+    self.altRootOffset = self.rootOffset
+    self.altRootByte = self.rootByte
+    self.flush()
+}
+
+func createRootIdx(){
+    for col := range(selfIdx){
+        fmt.Printf("index %v created\n", col)
+        self.rootByte, self.rootOffset = getNodeByte()
+        self.rootByte.setType(TYPE_ROOT_L)
+        self.altRootByte = self.rootByte
+        self.altRootOffset = self.rootOffset
+        selfIdx[col] = self.rootOffset
+    }
     self.flush()
 }
 
 func makeByteCopy(node *NodeByte) (*NodeByte, uint64){
     newByte, offset := getNodeByte()
     if(node.isRoot() == true){
-        altRootByte = newByte
-        altRootOffset = offset
+        self.altRootByte = newByte
+        self.altRootOffset = offset
     }
     copy(newByte.data[:OFF_NKEYS], node.data[:OFF_NKEYS])
     copy(newByte.data[OFF_FCP:OFF_FCP+8], node.data[OFF_FCP:OFF_FCP+8])
@@ -91,7 +100,7 @@ func makeByteCopy(node *NodeByte) (*NodeByte, uint64){
         newByte.setNkeys(i+1)
     }
 
-    pushList.push(node.selfPtr)
+    self.pushList.push(node.selfPtr)
     if(node.isLeaf()){
         newByte.setNext(node.nextPtr())
         newByte.setPrev(node.prevPtr())
@@ -365,10 +374,10 @@ func insertLeaf(node *NodeByte, key []byte, value []byte, level uint32){
             newRootByte, off := getNodeByte()
             newRootByte.setType(TYPE_ROOT_I)
             insertInner(newRootByte, k, firstPtr, secondPtr, level)
-            altRootByte = newRootByte
-            altRootOffset = off
+            self.altRootByte = newRootByte
+            self.altRootOffset = off
         }else{
-            parent := findParent(altRootByte, key, 0, level-1)
+            parent := findParent(self.altRootByte, key, 0, level-1)
             insertInner(parent, k, firstPtr, secondPtr, level-1)
         }
     }
@@ -439,10 +448,10 @@ func insertInner(
             newRootByte, off := getNodeByte()
             newRootByte.setType(TYPE_ROOT_I)
             insertInner(newRootByte, k, firstPtr, secondPtr, pLevel)
-            altRootByte = newRootByte
-            altRootOffset = off
+            self.altRootByte = newRootByte
+            self.altRootOffset = off
         }else{
-            parent := findParent(altRootByte, key, 0, pLevel-1)
+            parent := findParent(self.altRootByte, key, 0, pLevel-1)
             insertInner(parent, k, firstPtr, secondPtr, pLevel-1)
         }
     }
@@ -545,7 +554,7 @@ func deleteLeaf(node *NodeByte, key []byte, level uint32){
         deleteLeaf(newChild,key,level+1)
 
         if(isInner == true){
-            deleteInner(altRootByte,key)
+            deleteInner(self.altRootByte,key)
         }
         return
     }
@@ -579,7 +588,7 @@ func fill(child *NodeByte, childKey []byte, isLeaf bool, level uint32){
 
     var cIndex uint16
     var ocIndex uint16
-    parent := findParent(altRootByte, childKey, 0, level-1)
+    parent := findParent(self.altRootByte, childKey, 0, level-1)
 
     for cIndex = 0; cIndex < parent.nkeys(); cIndex++ {
         cr := bytes.Compare(parent.key(cIndex), childKey)
@@ -735,7 +744,7 @@ func merge(
         fill(parent, childKey, isLeaf, level-1)
     }
     if(parent.isRoot() == true && parent.nkeys() == 0){
-        altRootByte = first
+        self.altRootByte = first
     }
 }
 
@@ -775,7 +784,7 @@ func mergeInner(
         fill(parent, childKey, isLeaf, level-1)
     }
     if(parent.isRoot() == true && parent.nkeys() == 0){
-        altRootByte = first
+        self.altRootByte = first
     }
 }
 
