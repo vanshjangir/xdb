@@ -32,7 +32,6 @@ type NodeByte struct{
 }
 
 var self *KV                    // kv pointer to access disk
-var selfIdx map[string]uint64   // maps columns to rootoffset
 
 func getNodeByte() (*NodeByte, uint64){
     var node = new(NodeByte)
@@ -60,14 +59,14 @@ func createRoot(){
     self.flush()
 }
 
-func createRootIdx(){
-    for col := range(selfIdx){
+func createRootIdx(index map[string]uint64){
+    for col := range(index){
         fmt.Printf("index %v created\n", col)
         self.rootByte, self.rootOffset = getNodeByte()
         self.rootByte.setType(TYPE_ROOT_L)
         self.altRootByte = self.rootByte
         self.altRootOffset = self.rootOffset
-        selfIdx[col] = self.rootOffset
+        index[col] = self.rootOffset
     }
     self.flush()
 }
@@ -842,6 +841,36 @@ func qget(node *NodeByte, key []byte, level uint32) []byte{
 
     for index = 0; index < node.nkeys(); index++ {
         cr := bytes.Compare(node.key(index), key)
+        if(cr == 0){
+            return node.value(index)
+        }
+    }
+
+    return nil
+}
+
+func qgetIdx(node *NodeByte, key []byte, level uint32) []byte{
+    var index uint16
+    if(node.isLeaf() == false){
+        for index = 0; index < node.nkeys(); index++ {
+            klen := node.klen(index)
+            actualkey := node.key(index)
+            secLen := binary.LittleEndian.Uint16(actualkey[klen-2:])
+            
+            cr := bytes.Compare(actualkey[:secLen], key)
+            if(cr > 0){
+                break
+            }
+        }
+        return qget(node.children(index), key, level+1)
+    }
+
+    for index = 0; index < node.nkeys(); index++ {
+        klen := node.klen(index)
+        actualkey := node.key(index)
+        secLen := binary.LittleEndian.Uint16(actualkey[klen-2:])
+        
+        cr := bytes.Compare(actualkey[:secLen], key)
         if(cr == 0){
             return node.value(index)
         }

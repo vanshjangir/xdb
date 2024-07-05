@@ -14,22 +14,16 @@ func main(){
     table.CreateTable("first")
     table.BEGIN()
 
-    table.Insert(append(k, 05), append(v,105))
-    table.Insert(append(k, 15), append(v,115))
-    table.Insert(append(k, 25), append(v,125))
-    table.Insert(append(k, 35), append(v,135))
-    table.Insert(append(k, 45), append(v,145))
-
+    table.Insert(append(k, 05), map[string][]byte{"firstcol": append(v, 105),"secondcol": append(v, 205)})
+    table.Insert(append(k, 15), map[string][]byte{"firstcol": append(v, 115),"secondcol": append(v, 215)})
+    table.Insert(append(k, 25), map[string][]byte{"firstcol": append(v, 125),"secondcol": append(v, 225)})
+    table.Insert(append(k, 35), map[string][]byte{"firstcol": append(v, 135),"secondcol": append(v, 235)})
+    table.Insert(append(k, 45), map[string][]byte{"firstcol": append(v, 145),"secondcol": append(v, 245)})
     table.COMMIT()
     table.BEGIN()
+    table.Update(append(k, 45), map[string][]byte{"firstcol": append(v, 155),"secondcol": append(v, 255)})
 
-    table.Insert(append(k, 55), append(v,155))
-    table.Insert(append(k, 65), append(v,165))
-    table.Insert(append(k, 75), append(v,175))
-    table.Insert(append(k, 85), append(v,185))
-    table.Insert(append(k, 95), append(v,195))
-
-    table.ROLLBACK()
+    table.COMMIT()
     table.Print()
 
     fmt.Println(table.Range(append(k, 5), append(k,195)))
