@@ -745,6 +745,9 @@ func merge(
     if(parent.isRoot() == true && parent.nkeys() == 0){
         self.altRootByte = first
     }
+
+    self.igLeafPages[second.selfPtr] = true
+    first.setNext(second.nextPtr())
 }
 
 func mergeInner(
@@ -849,20 +852,28 @@ func qget(node *NodeByte, key []byte, level uint32) []byte{
     return nil
 }
 
-func qgetIdx(node *NodeByte, key []byte, level uint32) []byte{
+func qgetIdx(node *NodeByte, key []byte, pkey [][]byte, level uint32) [][]byte{
     var index uint16
     if(node.isLeaf() == false){
+        isEqual := false
         for index = 0; index < node.nkeys(); index++ {
             klen := node.klen(index)
             actualkey := node.key(index)
             secLen := binary.LittleEndian.Uint16(actualkey[klen-2:])
             
             cr := bytes.Compare(actualkey[:secLen], key)
+            if(cr == 0){
+                pkey = qgetIdx(node.children(index+1), key, pkey, level+1)
+                isEqual = true
+            }
             if(cr > 0){
                 break
             }
         }
-        return qget(node.children(index), key, level+1)
+        if(isEqual == false){
+            pkey = qgetIdx(node.children(index), key, pkey, level+1)
+        }
+        return pkey
     }
 
     for index = 0; index < node.nkeys(); index++ {
@@ -872,16 +883,21 @@ func qgetIdx(node *NodeByte, key []byte, level uint32) []byte{
         
         cr := bytes.Compare(actualkey[:secLen], key)
         if(cr == 0){
-            return node.value(index)
+            pkey = append(pkey, node.key(index))
+        }
+        if(cr > 0){
+            break
         }
     }
-
-    return nil
+    return pkey
 }
 
 func qrange(node *NodeByte, keyStart []byte, keyEnd []byte) [][]byte{
     var index uint16
     if(node.isLeaf() == false){
+        if(keyStart == nil){
+            return qrange(node.children(0), keyStart, keyEnd)
+        }
         for index = 0; index < node.nkeys(); index++ {
             cr := bytes.Compare(node.key(index), keyStart)
             if(cr > 0){
@@ -889,6 +905,11 @@ func qrange(node *NodeByte, keyStart []byte, keyEnd []byte) [][]byte{
             }
         }
         return qrange(node.children(index), keyStart, keyEnd)
+    }
+
+    if(keyStart == nil){
+        index = 0
+        goto out
     }
 
     for index = 0; index < node.nkeys(); index++ {
@@ -902,9 +923,59 @@ func qrange(node *NodeByte, keyStart []byte, keyEnd []byte) [][]byte{
         }
     }
 
+    out:
     var values [][]byte
     values = traverse(values, node, keyEnd, index)
     return values
+}
+
+func qrangeIdx(node *NodeByte, keyStart []byte, keyEnd []byte) [][]byte{
+    var index uint16
+    if(node.isLeaf() == false){
+        if(keyStart == nil){
+            return qrangeIdx(node.children(0), keyStart, keyEnd)
+        }
+        for index = 0; index < node.nkeys(); index++ {
+            klen := node.klen(index)
+            actualkey := node.key(index)
+            secLen := binary.LittleEndian.Uint16(actualkey[klen-2:])
+            
+            cr := bytes.Compare(actualkey[:secLen], keyStart)
+            if(cr == 0){
+                index += 1
+                break
+            }
+            if(cr > 0){
+                break
+            }
+        }
+        return qrangeIdx(node.children(index), keyStart, keyEnd)
+    }
+
+    if(keyStart == nil){
+        index = 0
+        goto out
+    }
+
+    for index = 0; index < node.nkeys(); index++ {
+        klen := node.klen(index)
+        actualkey := node.key(index)
+        secLen := binary.LittleEndian.Uint16(actualkey[klen-2:])
+        
+        cr := bytes.Compare(actualkey[:secLen], keyStart)
+        if(cr == 0){
+            break
+        }
+        if(cr > 0){
+            index = min(index-1, 0)
+            break;
+        }
+    }
+
+out:
+    var keys [][]byte
+    keys = traverseIdx(keys, node, keyEnd, index)
+    return keys
 }
 
 func traverse(
@@ -913,6 +984,12 @@ func traverse(
 ) [][]byte{
 
     for i := index; i < node.nkeys(); i++ {
+        if(keyEnd == nil){
+            v := node.value(i);
+            values = append(values, v);
+            continue
+        }
+
         cr := bytes.Compare(node.key(i), keyEnd)
         if(cr > 0){
             return values
@@ -930,6 +1007,39 @@ func traverse(
         return values
     }else{
         return traverse(values, nextNode, keyEnd, 0)
+    }
+}
+
+func traverseIdx(
+    keys [][]byte, node *NodeByte,
+    keyEnd []byte, index uint16,
+) [][]byte{
+
+    for i := index; i < node.nkeys(); i++ {
+        if(keyEnd == nil){
+            k := node.key(i);
+            keys = append(keys, k);
+            continue
+        }
+        
+        klen := node.klen(index)
+        actualkey := node.key(index)
+        secLen := binary.LittleEndian.Uint16(actualkey[klen-2:])
+
+        cr := bytes.Compare(actualkey[:secLen], keyEnd)
+        if(cr > 0){
+            return keys
+        }
+
+        k := node.key(i);
+        keys = append(keys, k);
+    }
+
+    nextNode := node.nextNode()
+    if(nextNode == nil || nextNode.data == nil){
+        return keys
+    }else{
+        return traverseIdx(keys, nextNode, keyEnd, 0)
     }
 }
 

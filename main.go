@@ -19,12 +19,12 @@ func main(){
     table.Insert(append(k, 25), map[string][]byte{"firstcol": append(v, 125),"secondcol": append(v, 225)})
     table.Insert(append(k, 35), map[string][]byte{"firstcol": append(v, 135),"secondcol": append(v, 235)})
     table.Insert(append(k, 45), map[string][]byte{"firstcol": append(v, 145),"secondcol": append(v, 245)})
-    table.COMMIT()
-    table.BEGIN()
-    table.Update(append(k, 45), map[string][]byte{"firstcol": append(v, 155),"secondcol": append(v, 255)})
+    table.Insert(append(k, 55), map[string][]byte{"firstcol": append(v, 135),"secondcol": append(v, 245)})
 
     table.COMMIT()
     table.Print()
 
     fmt.Println(table.Range(append(k, 5), append(k,195)))
+    fmt.Println(table.GetPkey("firstcol", append(v,135)))
+    fmt.Println(table.RangeIdx("firstcol", append(v,135), append(v,145)))
 }

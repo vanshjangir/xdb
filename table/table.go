@@ -15,17 +15,23 @@ type Table struct{
     name string
     idxname string
     index map[string]uint64
+    columns []string
 }
+
+const (
+    SEC_RANGE_GREATER = 1
+    SEC_RANGE_LESS = 2
+)
 
 func (table *Table) encode(secMap map[string][]byte) []byte{
     var value []byte
-    for _, data := range(secMap){
+    for _, colname := range(table.columns){
         tmp := make([]byte, 2)
-        binary.LittleEndian.PutUint16(tmp, uint16(len(data)))
+        binary.LittleEndian.PutUint16(tmp, uint16(len(secMap[colname])))
         value = append(value, tmp[0])
         value = append(value, tmp[1])
-        for i := 0; i < len(data); i++ {
-            value = append(value, data[i])
+        for i := 0; i < len(secMap[colname]); i++ {
+            value = append(value, secMap[colname][i])
         }
     }
     return value
@@ -34,7 +40,7 @@ func (table *Table) encode(secMap map[string][]byte) []byte{
 func (table *Table) decode(value []byte) map[string][]byte{
     secMap := make(map[string][]byte)
     var i int = 0
-    for colname := range(table.index){
+    for _,colname := range(table.columns){
         if(i >= len(value)){
             break
         }
@@ -73,7 +79,9 @@ func (table *Table) CreateTable(tname string) error {
     table.index = make(map[string]uint64)
     table.index["firstcol"] = 0
     table.index["secondcol"] = 0
-    table.idxkv.CreateIdx(fullIndexPath, table.index)
+    table.columns = append(table.columns, "firstcol")
+    table.columns = append(table.columns, "secondcol")
+    table.idxkv.CreateIdx(fullIndexPath, table.index, table.columns)
 
     return nil
 }
@@ -89,7 +97,7 @@ func (table *Table) LoadTable(tname string){
 
     table.idxkv = new(storage.KV)
     table.index = make(map[string]uint64)
-    table.idxkv.LoadIdx(fullIndexPath, table.index)
+    table.columns = table.idxkv.LoadIdx(fullIndexPath, table.index)
 }
 
 func (table *Table) Insert(key []byte, secMap map[string][]byte){
@@ -126,7 +134,7 @@ func (table *Table) Update(key []byte, secMap map[string][]byte){
 func (table *Table) secUpdate(key []byte, oldValue []byte){
     secMap := table.decode(oldValue)
     for colname, data := range(secMap){
-        table.secDelete(colname, data)
+        table.secDelete(colname, data, key)
         table.secInsert(colname, data, key)
     }
 }
@@ -136,12 +144,23 @@ func (table *Table) Delete(key []byte){
     table.kv.Delete(key)
     secMap := table.decode(value)
     for colname, data := range(secMap){
-        table.secDelete(colname, data)
+        table.secDelete(colname, data, key)
     }
 }
 
-func (table *Table) secDelete(colname string, data []byte){
-    actualData := table.idxkv.GetIndex(colname, data)
+func (table *Table) secDelete(colname string, data []byte, key []byte){
+    klen := len(data) + len(key) + 2
+    actualData := make([]byte, klen)
+    for i := 0; i < len(data); i++ {
+        actualData[i] = data[i]
+    }
+    for i := 0; i < len(key); i++ {
+        actualData[len(data)+i] = key[i]
+    }
+    binary.LittleEndian.PutUint16(
+        actualData[klen-2:],
+        uint16(len(data)),
+    )
     table.idxkv.DeleteIndex(colname, actualData)
 }
 
@@ -149,8 +168,22 @@ func (table *Table) Get(key []byte) []byte {
     return table.kv.Get(key)
 }
 
+func (table *Table) GetPkey(colname string, secKey []byte) [][]byte{
+    var pkey [][]byte
+    for _,data := range(table.idxkv.GetPkeyByIndex(colname, secKey)){
+        klen := len(data)
+        secLen := binary.LittleEndian.Uint16(data[klen-2:])
+        pkey = append(pkey, data[secLen:klen-2])
+    }
+    return pkey
+}
+
 func (table *Table) Range(keyStart []byte, keyEnd []byte) [][]byte {
     return table.kv.Range(keyStart, keyEnd)
+}
+
+func (table *Table) RangeIdx(colname string, keyStart []byte, keyEnd []byte) [][]byte{
+    return table.idxkv.RangeIdx(colname, keyStart, keyEnd)
 }
 
 func (table *Table) BEGIN(){
