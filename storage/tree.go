@@ -31,7 +31,7 @@ type NodeByte struct{
     selfPtr uint64
 }
 
-var self *KV                    // kv pointer to access disk
+var self *KV
 
 func getNodeByte() (*NodeByte, uint64){
     var node = new(NodeByte)
