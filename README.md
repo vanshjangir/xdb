@@ -18,9 +18,9 @@ xdb is an ACID compliant database and storage engine written purely in go. As of
 ### Additional Features
 Range queries take O(k + logn) time rather than O(klogn), check details [here](https://github.com/vanshjangir/xdb/blob/master/RANGE_Q.md).
 
-### Todo
-- [ ] Query parser(Abstract syntax tree) and executor
-- [ ] Rollback is not fully durable to crashes
+### Contributing
+The code contains many bugs, and there is much room for optimization, so any contributions are welcome.\
+[Todo](https://github.com/vanshjangir/xdb/issues/1)
 
 ### Useful
 * [build-your-own-db](https://build-your-own.org/database/00a_overview)
