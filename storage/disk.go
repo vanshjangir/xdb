@@ -11,15 +11,16 @@ const (
     META_TYPE_MAIN = 1
     META_TYPE_IDX = 2
 
-    MAIN_FL_OFF = 4096
-    MAIN_ROOT_OFF = 8192
+    OL_OFF = 4096
+    FL_OFF = 8192
+    ROOT_OFF = 12288
 
-    IDX_FL_OFF = 4096
-    IDX_FIRST_OFF = 8192
     IDX_META_FIRST_PAIR = 24
 
     PREV_LINK = 1
     NEXT_LINK = 2
+
+    LEAF_PAIR_SIZE = 18
 )
 
 type Transaction struct{
@@ -84,13 +85,13 @@ func (kv *KV) loadMeta(){
     self.rootByte.selfPtr = self.rootOffset
 
     kv.freeList = new(NodeFreeList)
-    kv.freeList.data = kv.page(MAIN_FL_OFF)
+    kv.freeList.data = kv.page(FL_OFF)
 }
 
 func (kv *KV) setMeta(){
     metaPage := kv.page(0)
     binary.LittleEndian.PutUint64(metaPage[:], META_TYPE_MAIN)
-    binary.LittleEndian.PutUint64(metaPage[8:], MAIN_ROOT_OFF)
+    binary.LittleEndian.PutUint64(metaPage[8:], ROOT_OFF)
     binary.LittleEndian.PutUint64(metaPage[16:], 2)
     kv.flushed = 2
 }
@@ -144,7 +145,7 @@ func (kv *KV) loadMetaIdx(index map[string]uint64) []string{
         columns = append(columns, col)
     }
     kv.freeList = new(NodeFreeList)
-    kv.freeList.data = kv.page(IDX_FL_OFF)
+    kv.freeList.data = kv.page(FL_OFF)
     return columns
 }
 
@@ -208,7 +209,7 @@ func (kv *KV) mapFile(fileName string){
         os.Exit(1)
     }
 
-    kv.fSize = max(uint64(fileInfo.Size()), 2*TREE_PAGE_SIZE)
+    kv.fSize = max(uint64(fileInfo.Size()), 4*TREE_PAGE_SIZE)
     kv.mSize = 2*kv.fSize
 
     fileChunk, err = syscall.Mmap(
@@ -339,7 +340,9 @@ func (kv *KV) updateLeafLink(){
                 var oldLink [2]uint64
                 oldLink[0] = NEXT_LINK
                 oldLink[1] = prev.nextPtr()
+
                 kv.tx.oldLeafLinks[prev.selfPtr] = oldLink
+                kv.oldLinkToDisk(prev.selfPtr, oldLink)
             }
             prev.setNext(kv.uLeafPages[i])
         }
@@ -351,13 +354,54 @@ func (kv *KV) updateLeafLink(){
                 var oldLink [2]uint64
                 oldLink[0] = PREV_LINK
                 oldLink[1] = next.prevPtr()
+
                 kv.tx.oldLeafLinks[next.selfPtr] = oldLink
+                kv.oldLinkToDisk(next.selfPtr, oldLink)
             }
             next.setPrev(kv.uLeafPages[i])
         }
     }
     kv.uLeafPages = kv.uLeafPages[:0]
     kv.igLeafPages = make(map[uint64]bool)
+}
+
+func (kv *KV) oldLinkToDisk(curPtr uint64, oldLink [2]uint64){
+    page := kv.page(OL_OFF)
+    npairs := binary.LittleEndian.Uint64(page[:])
+    binary.LittleEndian.PutUint16(
+        page[8 + npairs*LEAF_PAIR_SIZE:],
+        uint16(oldLink[0]),
+    )
+    
+    binary.LittleEndian.PutUint64(
+        page[8 + npairs*LEAF_PAIR_SIZE + 2:],
+        curPtr,
+    )
+    
+    binary.LittleEndian.PutUint64(
+        page[8 + npairs*LEAF_PAIR_SIZE + 10:],
+        oldLink[1],
+    )
+
+    binary.LittleEndian.PutUint64(page[:], npairs+1)
+}
+
+func (kv *KV) getOldLinks() map[uint64][2]uint64{
+    page := kv.page(OL_OFF)
+    oldLeafLink := make(map[uint64][2]uint64)
+    npairs := binary.LittleEndian.Uint64(page[:])
+
+    for i := npairs-1; i >= 0; i-- {
+        var oldLink [2]uint64
+        offset := 8 + LEAF_PAIR_SIZE*i
+        oldLink[0] = uint64(binary.LittleEndian.Uint16(page[offset:]))
+        curPtr := uint64(binary.LittleEndian.Uint64(page[offset+2:]))
+        oldLink[1] = uint64(binary.LittleEndian.Uint64(page[offset+10:]))
+        oldLeafLink[curPtr] = oldLink
+    }
+
+    binary.LittleEndian.PutUint64(page[:], 0)
+    return oldLeafLink
 }
 
 func (kv *KV) TxBegin(){
@@ -398,7 +442,9 @@ func (kv *KV) TxRollback(){
         kv.index[col] = off
     }
 
-    for nodeptr, arr := range(kv.tx.oldLeafLinks){
+    oldLeafLinks := kv.getOldLinks()
+
+    for nodeptr, arr := range(oldLeafLinks){
         node := new(NodeByte)
         node.data = kv.page(nodeptr)
         if(arr[0] == NEXT_LINK){
@@ -542,8 +588,6 @@ func (kv *KV) RangeIdx(colname string, keyStart []byte, keyEnd []byte) [][]byte{
 
 func (kv *KV) Print(){
     self = kv
-    node := new(NodeByte)
-    node.data = kv.page(kv.tx.rootOffset)
     printTree(kv.rootByte, 0)
 }
 

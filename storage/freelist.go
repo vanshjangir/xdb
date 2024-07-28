@@ -20,7 +20,7 @@ type NodeFreeList struct{
 
 func createFreeList(){
     self.freeList = new(NodeFreeList)
-    self.freeList.data = self.page(MAIN_FL_OFF)
+    self.freeList.data = self.page(FL_OFF)
 
     self.freeList.setPageno(1)
     self.freeList.setNoffs(0)
