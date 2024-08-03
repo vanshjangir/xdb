@@ -26,7 +26,6 @@ const (
 type Transaction struct{
     rootOffset uint64
     index map[string]uint64
-    oldLeafLinks map[uint64][2]uint64
     afterAllocPages []uint64
 }
 
@@ -37,8 +36,6 @@ type KV struct{
     flushed uint64
     nNewPages uint64
     data [][]byte
-    uLeafPages []uint64
-    igLeafPages map[uint64]bool
 
     rootByte *NodeByte
     altRootByte *NodeByte
@@ -58,9 +55,6 @@ func (kv *KV) Create(fileName string){
     self = kv
     if(kv.tx.index == nil){
         kv.tx.index = make(map[string]uint64)
-    }
-    if(kv.tx.oldLeafLinks == nil){
-        kv.tx.oldLeafLinks = make(map[uint64][2]uint64)
     }
     kv.mapFile(fileName)
     kv.setMeta()
@@ -107,9 +101,6 @@ func (kv *KV) CreateIdx(fileName string, index map[string]uint64, columns []stri
     self = kv
     if(kv.tx.index == nil){
         kv.tx.index = make(map[string]uint64)
-    }
-    if(kv.tx.oldLeafLinks == nil){
-        kv.tx.oldLeafLinks = make(map[uint64][2]uint64)
     }
     kv.index = index
     kv.mapFile(fileName)
@@ -325,46 +316,6 @@ func (kv *KV) updateFreeList(){
     kv.pushList.setNoffs(0)
 }
 
-func (kv *KV) updateLeafLink(){
-    for i := 0; i < len(kv.uLeafPages); i++ {
-        if(kv.igLeafPages[kv.uLeafPages[i]] == true){
-            continue
-        }
-        node := new(NodeByte)
-        node.data = kv.page(kv.uLeafPages[i])
-
-        prev := node.prevNode()
-        if(prev != nil){
-            _, exists := kv.tx.oldLeafLinks[prev.selfPtr]
-            if(exists == false){
-                var oldLink [2]uint64
-                oldLink[0] = NEXT_LINK
-                oldLink[1] = prev.nextPtr()
-
-                kv.tx.oldLeafLinks[prev.selfPtr] = oldLink
-                kv.oldLinkToDisk(prev.selfPtr, oldLink)
-            }
-            prev.setNext(kv.uLeafPages[i])
-        }
-
-        next := node.nextNode()
-        if(next != nil){
-            _, exists := kv.tx.oldLeafLinks[next.selfPtr]
-            if(exists == false){
-                var oldLink [2]uint64
-                oldLink[0] = PREV_LINK
-                oldLink[1] = next.prevPtr()
-
-                kv.tx.oldLeafLinks[next.selfPtr] = oldLink
-                kv.oldLinkToDisk(next.selfPtr, oldLink)
-            }
-            next.setPrev(kv.uLeafPages[i])
-        }
-    }
-    kv.uLeafPages = kv.uLeafPages[:0]
-    kv.igLeafPages = make(map[uint64]bool)
-}
-
 func (kv *KV) oldLinkToDisk(curPtr uint64, oldLink [2]uint64){
     page := kv.page(OL_OFF)
     npairs := binary.LittleEndian.Uint64(page[:])
@@ -386,45 +337,22 @@ func (kv *KV) oldLinkToDisk(curPtr uint64, oldLink [2]uint64){
     binary.LittleEndian.PutUint64(page[:], npairs+1)
 }
 
-func (kv *KV) getOldLinks() map[uint64][2]uint64{
-    page := kv.page(OL_OFF)
-    oldLeafLink := make(map[uint64][2]uint64)
-    npairs := binary.LittleEndian.Uint64(page[:])
-
-    for i := npairs-1; i >= 0; i-- {
-        var oldLink [2]uint64
-        offset := 8 + LEAF_PAIR_SIZE*i
-        oldLink[0] = uint64(binary.LittleEndian.Uint16(page[offset:]))
-        curPtr := uint64(binary.LittleEndian.Uint64(page[offset+2:]))
-        oldLink[1] = uint64(binary.LittleEndian.Uint64(page[offset+10:]))
-        oldLeafLink[curPtr] = oldLink
-    }
-
-    binary.LittleEndian.PutUint64(page[:], 0)
-    return oldLeafLink
-}
-
 func (kv *KV) TxBegin(){
     self = kv
     if(kv.tx.index == nil){
         kv.tx.index = make(map[string]uint64)
-    }
-    if(kv.tx.oldLeafLinks == nil){
-        kv.tx.oldLeafLinks = make(map[uint64][2]uint64)
     }
     kv.tx.rootOffset = kv.rootOffset
     for col, off := range(kv.index){
         kv.tx.index[col] = off
     }
 
-    kv.igLeafPages = make(map[uint64]bool)
     kv.nNewPages = 0
     makeFreeListCopy()
 }
 
 func (kv *KV) TxCommit(){
     self = kv
-    kv.tx.oldLeafLinks = nil
     kv.tx.afterAllocPages = kv.tx.afterAllocPages[:0]
     kv.flush()
 }
@@ -442,19 +370,6 @@ func (kv *KV) TxRollback(){
         kv.index[col] = off
     }
 
-    oldLeafLinks := kv.getOldLinks()
-
-    for nodeptr, arr := range(oldLeafLinks){
-        node := new(NodeByte)
-        node.data = kv.page(nodeptr)
-        if(arr[0] == NEXT_LINK){
-            node.setNext(arr[1])
-        }else{
-            node.setPrev(arr[1])
-        }
-    }
-
-    kv.tx.oldLeafLinks = nil
     kv.pushList.setNoffs(0)
 
     for i := 0; i < len(kv.tx.afterAllocPages); i++ {
@@ -491,7 +406,6 @@ func (kv *KV) flush(){
 
 func (kv *KV) changeRoot(){
     metaPage := kv.page(0)
-    kv.updateLeafLink()
 
     if(binary.LittleEndian.Uint16(metaPage[:]) == META_TYPE_IDX){
         self.rootByte = self.altRootByte
@@ -554,7 +468,7 @@ func (kv *KV) UpdateIndex(colname string, key []byte, value []byte){
 
 func (kv *KV) Get(key []byte) []byte{
     self = kv
-    return qget(self.rootByte, key, 0)
+    return qget(self.rootByte, key)
 }
 
 func (kv *KV) GetPkeyByIndex(colname string, key []byte) [][]byte{
@@ -567,12 +481,14 @@ func (kv *KV) GetPkeyByIndex(colname string, key []byte) [][]byte{
 
     var pkey [][]byte
     
-    return qgetIdx(self.rootByte, key, pkey, 0)
+    return qgetIdx(self.rootByte, key, pkey)
 }
 
 func (kv *KV) Range(keyStart []byte, keyEnd []byte) [][]byte {
     self = kv
-    return qrange(self.rootByte, keyStart, keyEnd)
+    var it RangeIter
+    qrange(self.rootByte, keyStart, keyEnd, &it)
+    return it.values
 }
 
 func (kv *KV) RangeIdx(colname string, keyStart []byte, keyEnd []byte) [][]byte{
@@ -583,7 +499,9 @@ func (kv *KV) RangeIdx(colname string, keyStart []byte, keyEnd []byte) [][]byte{
     self.rootOffset = kv.index[colname]
     self.rootByte.selfPtr = self.rootOffset
     
-    return qrangeIdx(self.rootByte, keyStart, keyEnd)
+    var it RangeIter
+    qrangeIdx(self.rootByte, keyStart, keyEnd, &it)
+    return it.values
 }
 
 func (kv *KV) Print(){
