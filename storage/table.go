@@ -1,17 +1,18 @@
-package table
+package storage
 
 import (
     "encoding/binary"
     "fmt"
     "os"
-    "github.com/vanshjangir/xdb/storage"
 )
 
 type Table struct{
     fp *os.File
     idxfp *os.File
-    kv *storage.KV
-    idxkv *storage.KV
+    kv *KeyValue
+    idxkv *KeyValue
+    tx *Transaction
+
     name string
     idxname string
     index map[string]uint64
@@ -22,6 +23,15 @@ const (
     SEC_RANGE_GREATER = 1
     SEC_RANGE_LESS = 2
 )
+
+func (table *Table) Init(tx *Transaction){
+    table.tx = tx
+    table.kv = new(KeyValue)
+    table.kv.Init(tx, table)
+    table.idxkv = new(KeyValue)
+    table.idxkv.Init(tx, table)
+    table.index = make(map[string]uint64)
+}
 
 func (table *Table) encode(secMap map[string][]byte) []byte{
     var value []byte
@@ -72,16 +82,31 @@ func (table *Table) CreateTable(tname string) error {
         return fmt.Errorf("ERROR creating index file: %v", err)
     }
 
-    table.kv = new(storage.KV)
     table.kv.Create(fullFilePath)
     
-    table.idxkv = new(storage.KV)
-    table.index = make(map[string]uint64)
     table.index["firstcol"] = 0
     table.index["secondcol"] = 0
     table.columns = append(table.columns, "firstcol")
     table.columns = append(table.columns, "secondcol")
-    table.idxkv.CreateIdx(fullIndexPath, table.index, table.columns)
+    
+    table.idxkv.CreateIdx(fullIndexPath)
+
+    if(table.tx.isGoing == true){
+        table.tx.rootMap[table.name] = table.kv.rootOffset
+        for idxname, offset := range(table.index){
+            table.tx.indexMap[table.name][idxname] = offset
+        }
+        table.kv.nNewPages = 0
+        table.idxkv.nNewPages = 0
+        table.kv.fl.makeFreeListCopy()
+        table.idxkv.fl.makeFreeListCopy()
+        table.tx.tables = append(table.tx.tables, table)
+    }
+
+    // setting max keys per node as 3 for testing
+    // will be set according to the size of a row in the table
+    table.kv.tree.Init(3)
+    table.idxkv.tree.Init(3)
 
     return nil
 }
@@ -92,12 +117,29 @@ func (table *Table) LoadTable(tname string){
     table.idxname = tname+".idx"
     fullIndexPath := "files/"+tname+".idx"
     
-    table.kv = new(storage.KV)
     table.kv.Load(fullFilePath)
+    table.columns = table.idxkv.LoadIdx(fullIndexPath)
+    table.tx.indexMap[table.name] = make(map[string]uint64)
 
-    table.idxkv = new(storage.KV)
-    table.index = make(map[string]uint64)
-    table.columns = table.idxkv.LoadIdx(fullIndexPath, table.index)
+    if(table.tx.isGoing == true){
+        _, ok := table.tx.rootMap[table.name]
+        if(ok == false){
+            table.tx.rootMap[table.name] = table.kv.rootOffset
+            for idxname, offset := range(table.index){
+                table.tx.indexMap[table.name][idxname] = offset
+            }
+            table.kv.nNewPages = 0
+            table.idxkv.nNewPages = 0
+            table.kv.fl.makeFreeListCopy()
+            table.idxkv.fl.makeFreeListCopy()
+            table.tx.tables = append(table.tx.tables, table)
+        }
+    }
+    
+    // setting max keys per node as 3 for testing
+    // will be set according to the size of a row in the table
+    table.kv.tree.Init(3)
+    table.idxkv.tree.Init(3)
 }
 
 func (table *Table) Insert(key []byte, secMap map[string][]byte){
@@ -184,21 +226,6 @@ func (table *Table) Range(keyStart []byte, keyEnd []byte) [][]byte {
 
 func (table *Table) RangeIdx(colname string, keyStart []byte, keyEnd []byte) [][]byte{
     return table.idxkv.RangeIdx(colname, keyStart, keyEnd)
-}
-
-func (table *Table) BEGIN(){
-    table.kv.TxBegin()
-    table.idxkv.TxBegin()
-}
-
-func (table *Table) COMMIT(){
-    table.kv.TxCommit()
-    table.idxkv.TxCommit()
-}
-
-func (table *Table) ROLLBACK(){
-    table.kv.TxRollback()
-    table.idxkv.TxRollback()
 }
 
 func (table *Table) Print(){

@@ -24,12 +24,14 @@ const (
 )
 
 type Transaction struct{
-    rootOffset uint64
-    index map[string]uint64
-    afterAllocPages []uint64
+    isGoing bool
+    rootMap map[string]uint64
+    indexMap map[string]map[string]uint64
+    afterAllocPages map[string][]uint64
+    tables []*Table
 }
 
-type KV struct{
+type KeyValue struct{
     fp *os.File
     fSize uint64
     mSize uint64
@@ -37,52 +39,77 @@ type KV struct{
     nNewPages uint64
     data [][]byte
 
+    // Tree specific fields, can change according
+    // to the tree that is being accessed
+
     rootByte *NodeByte
     altRootByte *NodeByte
     rootOffset uint64
     altRootOffset uint64
-    index map[string]uint64
     colname string
 
     freeList *NodeFreeList
     pushList *NodeFreeList
     popList *NodeFreeList
 
-    tx Transaction
+    // Pointer to access Tree functions like
+    // creating Root, queries, printing, etc
+    tree *Tree
+
+    // Pointer to access FreeList functions like
+    // creating NodeFreeList and making NodeFreeList copies
+
+    fl *FreeList
+
+    // Poitner to access the parent
+    // Transation and Table struct
+
+    tx *Transaction
+    table *Table
 }
 
-func (kv *KV) Create(fileName string){
-    self = kv
-    if(kv.tx.index == nil){
-        kv.tx.index = make(map[string]uint64)
-    }
+func (kv *KeyValue) Init(tx *Transaction, table *Table){
+    kv.tx = tx
+    kv.table = table
+    kv.tree = new(Tree)
+    kv.fl = new(FreeList)
+    kv.fl.kv = kv
+    kv.tree.kv = kv
+}
+
+func (tx *Transaction) Init(){
+    tx.isGoing = false
+    tx.rootMap = make(map[string]uint64)
+    tx.indexMap = make(map[string]map[string]uint64)
+    tx.afterAllocPages = make(map[string][]uint64)
+}
+
+func (kv *KeyValue) Create(fileName string){
     kv.mapFile(fileName)
     kv.setMeta()
-    createFreeList()
-    createRoot()
+    kv.fl.createFreeList()
+    kv.tree.createRoot()
 }
 
-func (kv *KV) Load(fileName string){
-    self = kv
+func (kv *KeyValue) Load(fileName string){
     kv.mapFile(fileName)
     kv.loadMeta()
-    kv.tx.rootOffset = kv.rootOffset
 }
 
-func (kv *KV) loadMeta(){
+func (kv *KeyValue) loadMeta(){
     metaPage := kv.page(0)
-    self.rootOffset = binary.LittleEndian.Uint64(metaPage[8:])
+    kv.rootOffset = binary.LittleEndian.Uint64(metaPage[8:])
     kv.flushed = binary.LittleEndian.Uint64(metaPage[16:])
 
-    self.rootByte = new(NodeByte)
-    self.rootByte.data = kv.page(self.rootOffset)
-    self.rootByte.selfPtr = self.rootOffset
+    kv.rootByte = new(NodeByte)
+    kv.rootByte.data = kv.page(kv.rootOffset)
+    kv.rootByte.selfPtr = kv.rootOffset
 
     kv.freeList = new(NodeFreeList)
     kv.freeList.data = kv.page(FL_OFF)
 }
 
-func (kv *KV) setMeta(){
+func (kv *KeyValue) setMeta(){
     metaPage := kv.page(0)
     binary.LittleEndian.PutUint64(metaPage[:], META_TYPE_MAIN)
     binary.LittleEndian.PutUint64(metaPage[8:], ROOT_OFF)
@@ -90,38 +117,27 @@ func (kv *KV) setMeta(){
     kv.flushed = 2
 }
 
-func (kv *KV) updateMeta(){
+func (kv *KeyValue) updateMeta(){
     metaPage := kv.page(0)
-    kv.tx.rootOffset = self.rootOffset
-    binary.LittleEndian.PutUint64(metaPage[8:], kv.tx.rootOffset)
+    kv.tx.rootMap[kv.table.name] = kv.rootOffset
+    binary.LittleEndian.PutUint64(metaPage[8:], kv.rootOffset)
     binary.LittleEndian.PutUint64(metaPage[16:], kv.flushed)
 }
 
-func (kv *KV) CreateIdx(fileName string, index map[string]uint64, columns []string){
-    self = kv
-    if(kv.tx.index == nil){
-        kv.tx.index = make(map[string]uint64)
-    }
-    kv.index = index
+func (kv *KeyValue) CreateIdx(fileName string){
     kv.mapFile(fileName)
-    kv.setMetaIdx(columns)
-    createFreeList()
-    createRootIdx(index)
+    kv.setMetaIdx()
+    kv.fl.createFreeList()
+    kv.tree.createRootIdx()
 }
 
-func (kv *KV) LoadIdx(fileName string, index map[string]uint64) []string{
-    self = kv
-    kv.index = index
+func (kv *KeyValue) LoadIdx(fileName string) []string{
     kv.mapFile(fileName)
-    columns := kv.loadMetaIdx(index)
-    kv.tx.index = make(map[string]uint64)
-    for col, off := range(kv.index){
-        kv.tx.index[col] = off
-    }
+    columns := kv.loadMetaIdx()
     return columns
 }
 
-func (kv *KV) loadMetaIdx(index map[string]uint64) []string{
+func (kv *KeyValue) loadMetaIdx() []string{
     metaPage := kv.page(0)
     idxlen := binary.LittleEndian.Uint64(metaPage[8:])
     offset := IDX_META_FIRST_PAIR
@@ -131,7 +147,7 @@ func (kv *KV) loadMetaIdx(index map[string]uint64) []string{
         clen := binary.LittleEndian.Uint16(metaPage[offset:])
         col := string(metaPage[offset+2 : offset+2+int(clen)])
         key := binary.LittleEndian.Uint64(metaPage[offset+2+int(clen):])
-        index[col] = key
+        kv.table.index[col] = key
         offset += 2 + int(clen) + 8
         columns = append(columns, col)
     }
@@ -140,14 +156,14 @@ func (kv *KV) loadMetaIdx(index map[string]uint64) []string{
     return columns
 }
 
-func (kv *KV) setMetaIdx(columns []string){
+func (kv *KeyValue) setMetaIdx(){
     metaPage := kv.page(0)
     binary.LittleEndian.PutUint64(metaPage[:], META_TYPE_IDX)
-    binary.LittleEndian.PutUint64(metaPage[8:], uint64(len(kv.index)))
+    binary.LittleEndian.PutUint64(metaPage[8:], uint64(len(kv.table.index)))
     binary.LittleEndian.PutUint64(metaPage[16:], 2)
 
     offset := IDX_META_FIRST_PAIR
-    for _,col := range(columns){
+    for _,col := range(kv.table.columns){
         clen := uint16(len(col))
         binary.LittleEndian.PutUint16(metaPage[offset:], clen)
 
@@ -155,28 +171,31 @@ func (kv *KV) setMetaIdx(columns []string){
             metaPage[offset+2+i] = col[i];
         }
 
-        binary.LittleEndian.PutUint64(metaPage[offset+int(clen)+2:], kv.index[col])
+        binary.LittleEndian.PutUint64(metaPage[offset+int(clen)+2:], kv.table.index[col])
         offset += 2 + int(clen) + 8
     }
 
     kv.flushed = 2
 }
 
-func (kv *KV) updateMetaIdx(){
+func (kv *KeyValue) updateMetaIdx(){
+    tableName := kv.table.name
     metaPage := kv.page(0)
-    binary.LittleEndian.PutUint64(metaPage[8:], uint64(len(kv.index)))
+    binary.LittleEndian.PutUint64(metaPage[8:], uint64(len(kv.table.index)))
     binary.LittleEndian.PutUint64(metaPage[16:], kv.flushed)
-    
+   
+    index := make(map[string]uint64)
     offset := IDX_META_FIRST_PAIR
-    for col, rOff := range(kv.index){
+    for col, rOff := range(kv.table.index){
         offset += 2 + len(col)
-        kv.tx.index[col] = rOff
+        index[col] = rOff
         binary.LittleEndian.PutUint64(metaPage[offset:], rOff)
         offset += 8
     }
+    kv.tx.indexMap[tableName] = index
 }
 
-func (kv *KV) mapFile(fileName string){
+func (kv *KeyValue) mapFile(fileName string){
     var file *os.File
     var fileInfo os.FileInfo
     var fileChunk []byte
@@ -225,7 +244,7 @@ func (kv *KV) mapFile(fileName string){
     kv.data = append(kv.data, fileChunk)
 }
 
-func (kv *KV) extendMap() error {
+func (kv *KeyValue) extendMap() error {
     fileChunk,err := syscall.Mmap(
         int(kv.fp.Fd()), int64(kv.mSize), int(kv.mSize),
         syscall.PROT_READ | syscall.PROT_WRITE,
@@ -240,7 +259,7 @@ func (kv *KV) extendMap() error {
     return nil
 }
 
-func (kv *KV) page(offset uint64) []byte {
+func (kv *KeyValue) page(offset uint64) []byte {
     if(offset >= kv.fSize){
         return nil
     }
@@ -257,7 +276,7 @@ func (kv *KV) page(offset uint64) []byte {
     return nil
 }
 
-func (kv *KV) newpage() ([]byte, uint64, error){
+func (kv *KeyValue) newpage() ([]byte, uint64, error){
 
     var pageByte []byte
     var offset uint64
@@ -291,14 +310,14 @@ func (kv *KV) newpage() ([]byte, uint64, error){
     }
 
     offset = (kv.flushed + kv.nNewPages - 1)*TREE_PAGE_SIZE
-    kv.tx.afterAllocPages = append(kv.tx.afterAllocPages, offset)
+    kv.tx.afterAllocPages[kv.table.name] = append(kv.tx.afterAllocPages[kv.table.name], offset)
 
 out:
     pageByte = kv.page(offset)
     return pageByte, offset, nil
 }
 
-func (kv *KV) updateFreeList(){
+func (kv *KeyValue) updateFreeList(){
     if(kv.popList == nil || kv.pushList == nil){
         return
     }
@@ -316,71 +335,44 @@ func (kv *KV) updateFreeList(){
     kv.pushList.setNoffs(0)
 }
 
-func (kv *KV) oldLinkToDisk(curPtr uint64, oldLink [2]uint64){
-    page := kv.page(OL_OFF)
-    npairs := binary.LittleEndian.Uint64(page[:])
-    binary.LittleEndian.PutUint16(
-        page[8 + npairs*LEAF_PAIR_SIZE:],
-        uint16(oldLink[0]),
-    )
-    
-    binary.LittleEndian.PutUint64(
-        page[8 + npairs*LEAF_PAIR_SIZE + 2:],
-        curPtr,
-    )
-    
-    binary.LittleEndian.PutUint64(
-        page[8 + npairs*LEAF_PAIR_SIZE + 10:],
-        oldLink[1],
-    )
-
-    binary.LittleEndian.PutUint64(page[:], npairs+1)
+func (tx *Transaction) Begin(){
+    tx.isGoing = true
 }
 
-func (kv *KV) TxBegin(){
-    self = kv
-    if(kv.tx.index == nil){
-        kv.tx.index = make(map[string]uint64)
+func (tx *Transaction) Commit(){
+    for _,table := range(tx.tables){
+        tx.afterAllocPages[table.name] = tx.afterAllocPages[table.name][:0]
+        table.kv.flush()
+        table.idxkv.flush()
     }
-    kv.tx.rootOffset = kv.rootOffset
-    for col, off := range(kv.index){
-        kv.tx.index[col] = off
-    }
-
-    kv.nNewPages = 0
-    makeFreeListCopy()
 }
 
-func (kv *KV) TxCommit(){
-    self = kv
-    kv.tx.afterAllocPages = kv.tx.afterAllocPages[:0]
-    kv.flush()
+func (tx *Transaction) Rollback(){
+    for _, table := range(tx.tables){
+        table.kv.rootOffset = tx.rootMap[table.name]
+        table.kv.rootByte.data = table.kv.page(table.kv.rootOffset)
+        table.kv.rootByte.selfPtr = table.kv.rootOffset
+        table.kv.altRootByte = table.kv.rootByte
+        table.kv.altRootOffset = table.kv.rootOffset
+
+        for col, off := range(tx.indexMap[table.name]){
+            table.index[col] = off
+        }
+        
+        table.kv.pushList.setNoffs(0)
+
+        afterAllocPages := tx.afterAllocPages[table.name]
+        for i := 0; i < len(afterAllocPages); i++ {
+            table.kv.pushList.push(afterAllocPages[i])
+        }
+
+        tx.afterAllocPages[table.name] = tx.afterAllocPages[table.name][:0]
+        table.kv.flush()
+    }
+    tx.isGoing = false
 }
 
-func (kv *KV) TxRollback(){
-    self = kv
-    self.rootOffset = kv.tx.rootOffset
-    self.rootByte.data = kv.page(self.rootOffset)
-    self.rootByte.selfPtr = self.rootOffset
-
-    self.altRootByte = self.rootByte
-    self.altRootOffset = kv.tx.rootOffset
-
-    for col, off := range(kv.tx.index){
-        kv.index[col] = off
-    }
-
-    kv.pushList.setNoffs(0)
-
-    for i := 0; i < len(kv.tx.afterAllocPages); i++ {
-        kv.pushList.push(kv.tx.afterAllocPages[i])
-    }
-
-    kv.tx.afterAllocPages = kv.tx.afterAllocPages[:0]
-    kv.flush()
-}
-
-func (kv *KV) flush(){
+func (kv *KeyValue) flush(){
     if err := kv.fp.Sync(); err != nil {
         fmt.Println("ERROR in flush/Sync", err)
         os.Exit(1)
@@ -404,118 +396,115 @@ func (kv *KV) flush(){
     }
 }
 
-func (kv *KV) changeRoot(){
+func (kv *KeyValue) changeRoot(){
     metaPage := kv.page(0)
 
     if(binary.LittleEndian.Uint16(metaPage[:]) == META_TYPE_IDX){
-        self.rootByte = self.altRootByte
-        self.rootOffset = self.altRootOffset
-        self.rootByte.selfPtr = self.rootOffset
-        kv.index[kv.colname] = self.rootOffset
+        kv.rootByte = kv.altRootByte
+        kv.rootOffset = kv.altRootOffset
+        kv.rootByte.selfPtr = kv.rootOffset
+        kv.table.index[kv.colname] = kv.rootOffset
     }else{
-        self.rootOffset = self.altRootOffset
-        self.rootByte = self.altRootByte
+        kv.rootOffset = kv.altRootOffset
+        kv.rootByte = kv.altRootByte
     }
 }
 
-func (kv *KV) Insert(key []byte, value []byte){
-    self = kv
-    insertLeaf(self.rootByte, key, value, 0)
+func (kv *KeyValue) Insert(key []byte, value []byte){
+    kv.tree.insertLeaf(kv.rootByte, key, value, 0)
 }
 
-func (kv *KV) InsertIndex(colname string, key []byte, value []byte){
-    self = kv
+func (kv *KeyValue) InsertIndex(colname string, key []byte, value []byte){
     kv.colname = colname
-    self.rootByte = new(NodeByte)
-    self.rootByte.data = kv.page(kv.index[colname])
-    self.rootOffset = kv.index[colname]
-    self.rootByte.selfPtr = self.rootOffset
+    kv.rootByte = new(NodeByte)
+    kv.rootByte.data = kv.page(kv.table.index[colname])
+    kv.rootOffset = kv.table.index[colname]
+    kv.rootByte.selfPtr = kv.rootOffset
+    kv.rootByte.tree = kv.tree
     
-    insertLeaf(self.rootByte, key, value, 0)
+    kv.tree.insertLeaf(kv.rootByte, key, value, 0)
 }
 
-func (kv *KV) Delete(key []byte){
-    self = kv
-    deleteLeaf(self.rootByte, key, 0)
+func (kv *KeyValue) Delete(key []byte){
+    kv.tree.deleteLeaf(kv.rootByte, key, 0)
 }
 
-func (kv *KV) DeleteIndex(colname string, key []byte){
-    self = kv
+func (kv *KeyValue) DeleteIndex(colname string, key []byte){
     kv.colname = colname
-    self.rootByte = new(NodeByte)
-    self.rootByte.data = kv.page(kv.index[colname])
-    self.rootOffset = kv.index[colname]
-    self.rootByte.selfPtr = self.rootOffset
+    kv.rootByte = new(NodeByte)
+    kv.rootByte.data = kv.page(kv.table.index[colname])
+    kv.rootOffset = kv.table.index[colname]
+    kv.rootByte.selfPtr = kv.rootOffset
+    kv.rootByte.tree = kv.tree
     
-    deleteLeaf(self.rootByte, key, 0)
+    kv.tree.deleteLeaf(kv.rootByte, key, 0)
 }
 
-func (kv *KV) Update(key []byte, value []byte){
-    self = kv
-    update(self.rootByte, key, value, 0)
+func (kv *KeyValue) Update(key []byte, value []byte){
+    kv.tree.update(kv.rootByte, key, value, 0)
 }
 
-func (kv *KV) UpdateIndex(colname string, key []byte, value []byte){
-    self = kv
+func (kv *KeyValue) UpdateIndex(colname string, key []byte, value []byte){
     kv.colname = colname
-    self.rootByte = new(NodeByte)
-    self.rootByte.data = kv.page(kv.index[colname])
-    self.rootOffset = kv.index[colname]
-    self.rootByte.selfPtr = self.rootOffset
+    kv.rootByte = new(NodeByte)
+    kv.rootByte.data = kv.page(kv.table.index[colname])
+    kv.rootOffset = kv.table.index[colname]
+    kv.rootByte.selfPtr = kv.rootOffset
+    kv.rootByte.tree = kv.tree
     
-    update(self.rootByte, key, value, 0)
+    kv.tree.update(kv.rootByte, key, value, 0)
 }
 
-func (kv *KV) Get(key []byte) []byte{
-    self = kv
-    return qget(self.rootByte, key)
+func (kv *KeyValue) Get(key []byte) []byte{
+    kv.rootByte.tree = kv.tree
+    return kv.tree.qget(kv.rootByte, key)
 }
 
-func (kv *KV) GetPkeyByIndex(colname string, key []byte) [][]byte{
-    self = kv
+func (kv *KeyValue) GetPkeyByIndex(colname string, key []byte) [][]byte{
     kv.colname = colname
-    self.rootByte = new(NodeByte)
-    self.rootByte.data = kv.page(kv.index[colname])
-    self.rootOffset = kv.index[colname]
-    self.rootByte.selfPtr = self.rootOffset
+    kv.rootByte = new(NodeByte)
+    kv.rootByte.data = kv.page(kv.table.index[colname])
+    kv.rootOffset = kv.table.index[colname]
+    kv.rootByte.selfPtr = kv.rootOffset
 
     var pkey [][]byte
-    
-    return qgetIdx(self.rootByte, key, pkey)
+   
+    kv.rootByte.tree = kv.tree
+    return kv.tree.qgetIdx(kv.rootByte, key, pkey)
 }
 
-func (kv *KV) Range(keyStart []byte, keyEnd []byte) [][]byte {
-    self = kv
+func (kv *KeyValue) Range(keyStart []byte, keyEnd []byte) [][]byte {
     var it RangeIter
-    qrange(self.rootByte, keyStart, keyEnd, &it)
+    kv.rootByte.tree = kv.tree
+    kv.tree.qrange(kv.rootByte, keyStart, keyEnd, &it)
     return it.values
 }
 
-func (kv *KV) RangeIdx(colname string, keyStart []byte, keyEnd []byte) [][]byte{
-    self = kv
+func (kv *KeyValue) RangeIdx(colname string, keyStart []byte, keyEnd []byte) [][]byte{
     kv.colname = colname
-    self.rootByte = new(NodeByte)
-    self.rootByte.data = kv.page(kv.index[colname])
-    self.rootOffset = kv.index[colname]
-    self.rootByte.selfPtr = self.rootOffset
+    kv.rootByte = new(NodeByte)
+    kv.rootByte.data = kv.page(kv.table.index[colname])
+    kv.rootOffset = kv.table.index[colname]
+    kv.rootByte.selfPtr = kv.rootOffset
     
     var it RangeIter
-    qrangeIdx(self.rootByte, keyStart, keyEnd, &it)
+    kv.rootByte.tree = kv.tree
+    kv.tree.qrangeIdx(kv.rootByte, keyStart, keyEnd, &it)
     return it.values
 }
 
-func (kv *KV) Print(){
-    self = kv
-    printTree(kv.rootByte, 0)
+func (kv *KeyValue) Print(){
+    kv.rootByte.tree = kv.tree
+    kv.tree.printTree(kv.rootByte, 0)
 }
 
-func (kv *KV) PrintIndex(){
-    self = kv
-    for col := range(kv.tx.index){
+func (kv *KeyValue) PrintIndex(){
+    for col := range(kv.table.index){
         node := new(NodeByte)
-        node.data = kv.page(kv.tx.index[col])
+        node.data = kv.page(kv.table.index[col])
+        node.tree = kv.tree
         fmt.Println(col)
-        printTree(node, 0)
+        kv.tree.printTree(node, 0)
         fmt.Println()
     }
 }

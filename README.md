@@ -9,14 +9,11 @@ xdb is an ACID compliant database and storage engine written purely in go. As of
 
 ### Features
 * Atomic updates (either full transaction or none at all)
-* Durable to process crashes and power failures
-* Not so sure about disk failures(uses fsync)
+* Durable to process crashes and power failures (Not so sure about disk failures, uses fsync)
 * Point queries in O(logn) time
-* Range queries in O(k + logn) time
+* Range queries in O(k * logn) time
+* Secondary Indexes
 * Transactions
-
-### Additional Features
-Range queries take O(k + logn) time rather than O(klogn), check details [here](https://github.com/vanshjangir/xdb/blob/master/RANGE_Q.md).
 
 ### Contributing
 The code contains many bugs, and there is much room for optimization, so any contributions are welcome.\

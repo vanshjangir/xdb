@@ -2,7 +2,7 @@ package main
 
 import (
     "fmt"
-    "github.com/vanshjangir/xdb/table"
+    "github.com/vanshjangir/xdb/storage"
 )
 
 func main(){
@@ -10,9 +10,14 @@ func main(){
     var k []byte
     var v []byte
 
-    var table table.Table
+    tx := new(storage.Transaction)
+    tx.Init()
+    
+    tx.Begin()
+
+    var table storage.Table
+    table.Init(tx)
     table.CreateTable("first")
-    table.BEGIN()
 
     table.Insert(append(k, 05), map[string][]byte{"firstcol": append(v, 105),"secondcol": append(v, 205)})
     table.Insert(append(k, 15), map[string][]byte{"firstcol": append(v, 115),"secondcol": append(v, 215)})
@@ -21,7 +26,7 @@ func main(){
     table.Insert(append(k, 45), map[string][]byte{"firstcol": append(v, 145),"secondcol": append(v, 245)})
     table.Insert(append(k, 55), map[string][]byte{"firstcol": append(v, 135),"secondcol": append(v, 245)})
 
-    table.COMMIT()
+    tx.Commit()
     table.Print()
 
     fmt.Println(table.Range(append(k, 5), append(k,195)))

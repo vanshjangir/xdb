@@ -14,25 +14,29 @@ const (
     MAX_PER_PAGE = 508
 )
 
+type FreeList struct{
+    kv *KeyValue
+}
+
 type NodeFreeList struct{
     data []byte
 }
 
-func createFreeList(){
-    self.freeList = new(NodeFreeList)
-    self.freeList.data = self.page(FL_OFF)
+func (fl *FreeList) createFreeList(){
+    fl.kv.freeList = new(NodeFreeList)
+    fl.kv.freeList.data = fl.kv.page(FL_OFF)
 
-    self.freeList.setPageno(1)
-    self.freeList.setNoffs(0)
-    self.freeList.setTotal(0)
+    fl.kv.freeList.setPageno(1)
+    fl.kv.freeList.setNoffs(0)
+    fl.kv.freeList.setTotal(0)
 }
 
-func makeFreeListCopy(){
-    self.popList = new(NodeFreeList)
-    self.pushList = new(NodeFreeList)
-    self.popList.data = make([]byte, TREE_PAGE_SIZE)
-    self.pushList.data = make([]byte, TREE_PAGE_SIZE)
-    copy(self.popList.data[:TREE_PAGE_SIZE], self.freeList.data[:TREE_PAGE_SIZE])
+func (fl *FreeList) makeFreeListCopy(){
+    fl.kv.popList = new(NodeFreeList)
+    fl.kv.pushList = new(NodeFreeList)
+    fl.kv.popList.data = make([]byte, TREE_PAGE_SIZE)
+    fl.kv.pushList.data = make([]byte, TREE_PAGE_SIZE)
+    copy(fl.kv.popList.data[:TREE_PAGE_SIZE], fl.kv.freeList.data[:TREE_PAGE_SIZE])
 }
 
 func (node *NodeFreeList) pageno() uint64{
