@@ -79,13 +79,13 @@ func (tree *Tree) createRoot(){
 }
 
 func (tree *Tree) createRootIdx(){
-    for col := range(tree.kv.table.index){
+    for col := range(tree.kv.table.Index){
         fmt.Printf("index %v created\n", col)
         tree.kv.rootByte, tree.kv.rootOffset = tree.getNodeByte()
         tree.kv.rootByte.setType(TYPE_ROOT_L)
         tree.kv.altRootByte = tree.kv.rootByte
         tree.kv.altRootOffset = tree.kv.rootOffset
-        tree.kv.table.index[col] = tree.kv.rootOffset
+        tree.kv.table.Index[col] = tree.kv.rootOffset
     }
     tree.kv.flush()
 }
@@ -531,6 +531,7 @@ func (tree *Tree) deleteLeaf(node *NodeByte, key []byte, level uint32){
 
     if(node.nkeys() < tree.MID){
         if(node.isRoot() == true){
+            tree.kv.changeRoot()
             return
         }
         isLeaf := true
@@ -572,7 +573,7 @@ func (tree *Tree) fill(child *NodeByte, childKey []byte, isLeaf bool, level uint
         }
             
         if(isLeaf == true){
-            tree.merge(child,otherChild,parent,passIndex,level)
+            tree.mergeLeaf(child,otherChild,parent,passIndex,level)
         }else{
             tree.mergeInner(child,otherChild,parent,passIndex,level)
         }
@@ -656,7 +657,7 @@ func (tree *Tree) fill(child *NodeByte, childKey []byte, isLeaf bool, level uint
             )
             parent.setKeyOffset(parent.nkeys(), parent.keyOffset(parent.nkeys()+1))
             
-            for i := child.nkeys()-1; i > 0; i++ {
+            for i := child.nkeys()-1; i > 0; i-- {
                 off := child.keyOffset(i)
                 child.setKeyOffset(i, child.keyOffset(i-1))
                 child.setKeyOffset(i-1, off)
@@ -670,7 +671,7 @@ func (tree *Tree) fill(child *NodeByte, childKey []byte, isLeaf bool, level uint
     }
 }
 
-func (tree *Tree) merge(
+func (tree *Tree) mergeLeaf(
     first *NodeByte,
     second *NodeByte,
     parent *NodeByte,
@@ -700,6 +701,7 @@ func (tree *Tree) merge(
         tree.fill(parent, childKey, isLeaf, level-1)
     }
     if(parent.isRoot() == true && parent.nkeys() == 0){
+        first.setType(TYPE_ROOT_L)
         tree.kv.altRootByte = first
     }
 }
@@ -740,6 +742,7 @@ func (tree *Tree) mergeInner(
         tree.fill(parent, childKey, isLeaf, level-1)
     }
     if(parent.isRoot() == true && parent.nkeys() == 0){
+        first.setType(TYPE_ROOT_I)
         tree.kv.altRootByte = first
     }
 }
@@ -970,7 +973,11 @@ func (tree *Tree) travInNode(
             break;
         }
 
-        it.values = append(it.values, node.value(i))
+        combined := make([]byte, 2)
+        binary.LittleEndian.PutUint16(combined[:], node.klen(i))
+        combined = append(combined, node.key(i)...)
+        combined = append(combined, node.value(i)...)
+        it.values = append(it.values, combined)
     }
     return  i == node.nkeys()
 }
@@ -982,8 +989,8 @@ func (tree *Tree) travInNodeIdx(
 
     var i uint16
     for i := index; i < node.nkeys(); i++ {
-        klen := node.klen(index)
-        actualKey := node.key(index)
+        klen := node.klen(i)
+        actualKey := node.key(i)
         secLen := binary.LittleEndian.Uint16(actualKey[klen-2:])
 
         cr := bytes.Compare(actualKey[:secLen], keyEnd)
@@ -1015,7 +1022,7 @@ func (tree *Tree) printTree(node *NodeByte, level int){
         }
         fmt.Print("  ")
         for i := uint16(0); i <= node.nkeys(); i++ {
-            fmt.Print(node.cptr(i+1)," ")
+            fmt.Print(node.cptr(i)," ")
         }
     }
     fmt.Println()

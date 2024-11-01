@@ -84,19 +84,26 @@ func (tx *Transaction) Init(){
     tx.afterAllocPages = make(map[string][]uint64)
 }
 
-func (kv *KeyValue) Create(fileName string){
-    kv.mapFile(fileName)
-    kv.setMeta()
+func (kv *KeyValue) Create(fileName string, maxKeys uint16, keyname string) error {
+    if err := kv.mapFile(fileName); err != nil {
+        return fmt.Errorf("Create: %v", err)
+    }
+    kv.setMeta(maxKeys, keyname)
     kv.fl.createFreeList()
     kv.tree.createRoot()
+
+    return nil
 }
 
-func (kv *KeyValue) Load(fileName string){
-    kv.mapFile(fileName)
-    kv.loadMeta()
+func (kv *KeyValue) Load(fileName string) (uint16, string, error) {
+    if err := kv.mapFile(fileName); err != nil {
+        return 0, "", fmt.Errorf("Load: %v", err)
+    }
+    maxSize, keyname := kv.loadMeta()
+    return maxSize, keyname, nil
 }
 
-func (kv *KeyValue) loadMeta(){
+func (kv *KeyValue) loadMeta() (uint16, string) {
     metaPage := kv.page(0)
     kv.rootOffset = binary.LittleEndian.Uint64(metaPage[8:])
     kv.flushed = binary.LittleEndian.Uint64(metaPage[16:])
@@ -107,13 +114,22 @@ func (kv *KeyValue) loadMeta(){
 
     kv.freeList = new(NodeFreeList)
     kv.freeList.data = kv.page(FL_OFF)
+    
+    keynameLen := binary.LittleEndian.Uint16(metaPage[26:])
+    keyname := string(metaPage[28:28+keynameLen])
+
+    return binary.LittleEndian.Uint16(metaPage[24:]), keyname
 }
 
-func (kv *KeyValue) setMeta(){
+func (kv *KeyValue) setMeta(maxKeys uint16, keyname string){
     metaPage := kv.page(0)
     binary.LittleEndian.PutUint64(metaPage[:], META_TYPE_MAIN)
     binary.LittleEndian.PutUint64(metaPage[8:], ROOT_OFF)
     binary.LittleEndian.PutUint64(metaPage[16:], 2)
+    binary.LittleEndian.PutUint16(metaPage[24:], maxKeys)
+    keynameLen := uint16(len(keyname))
+    binary.LittleEndian.PutUint16(metaPage[26:], keynameLen)
+    copy(metaPage[28:28+keynameLen], []byte(keyname))
     kv.flushed = 2
 }
 
@@ -124,17 +140,23 @@ func (kv *KeyValue) updateMeta(){
     binary.LittleEndian.PutUint64(metaPage[16:], kv.flushed)
 }
 
-func (kv *KeyValue) CreateIdx(fileName string){
-    kv.mapFile(fileName)
+func (kv *KeyValue) CreateIdx(fileName string) error {
+    if err := kv.mapFile(fileName); err != nil {
+        return fmt.Errorf("kv.mapFile: %v", err)
+    }
     kv.setMetaIdx()
     kv.fl.createFreeList()
     kv.tree.createRootIdx()
+
+    return nil
 }
 
-func (kv *KeyValue) LoadIdx(fileName string) []string{
-    kv.mapFile(fileName)
-    columns := kv.loadMetaIdx()
-    return columns
+func (kv *KeyValue) LoadIdx(fileName string) error {
+    if err := kv.mapFile(fileName); err != nil {
+        return fmt.Errorf("kv.mapFile: %v", err)
+    }
+    kv.loadMetaIdx()
+    return nil
 }
 
 func (kv *KeyValue) loadMetaIdx() []string{
@@ -147,7 +169,7 @@ func (kv *KeyValue) loadMetaIdx() []string{
         clen := binary.LittleEndian.Uint16(metaPage[offset:])
         col := string(metaPage[offset+2 : offset+2+int(clen)])
         key := binary.LittleEndian.Uint64(metaPage[offset+2+int(clen):])
-        kv.table.index[col] = key
+        kv.table.Index[col] = key
         offset += 2 + int(clen) + 8
         columns = append(columns, col)
     }
@@ -159,11 +181,11 @@ func (kv *KeyValue) loadMetaIdx() []string{
 func (kv *KeyValue) setMetaIdx(){
     metaPage := kv.page(0)
     binary.LittleEndian.PutUint64(metaPage[:], META_TYPE_IDX)
-    binary.LittleEndian.PutUint64(metaPage[8:], uint64(len(kv.table.index)))
+    binary.LittleEndian.PutUint64(metaPage[8:], uint64(len(kv.table.Index)))
     binary.LittleEndian.PutUint64(metaPage[16:], 2)
 
     offset := IDX_META_FIRST_PAIR
-    for _,col := range(kv.table.columns){
+    for _,col := range(kv.table.Columns){
         clen := uint16(len(col))
         binary.LittleEndian.PutUint16(metaPage[offset:], clen)
 
@@ -171,7 +193,7 @@ func (kv *KeyValue) setMetaIdx(){
             metaPage[offset+2+i] = col[i];
         }
 
-        binary.LittleEndian.PutUint64(metaPage[offset+int(clen)+2:], kv.table.index[col])
+        binary.LittleEndian.PutUint64(metaPage[offset+int(clen)+2:], kv.table.Index[col])
         offset += 2 + int(clen) + 8
     }
 
@@ -181,12 +203,12 @@ func (kv *KeyValue) setMetaIdx(){
 func (kv *KeyValue) updateMetaIdx(){
     tableName := kv.table.name
     metaPage := kv.page(0)
-    binary.LittleEndian.PutUint64(metaPage[8:], uint64(len(kv.table.index)))
+    binary.LittleEndian.PutUint64(metaPage[8:], uint64(len(kv.table.Index)))
     binary.LittleEndian.PutUint64(metaPage[16:], kv.flushed)
    
     index := make(map[string]uint64)
     offset := IDX_META_FIRST_PAIR
-    for col, rOff := range(kv.table.index){
+    for col, rOff := range(kv.table.Index){
         offset += 2 + len(col)
         index[col] = rOff
         binary.LittleEndian.PutUint64(metaPage[offset:], rOff)
@@ -195,7 +217,7 @@ func (kv *KeyValue) updateMetaIdx(){
     kv.tx.indexMap[tableName] = index
 }
 
-func (kv *KeyValue) mapFile(fileName string){
+func (kv *KeyValue) mapFile(fileName string) error {
     var file *os.File
     var fileInfo os.FileInfo
     var fileChunk []byte
@@ -203,20 +225,17 @@ func (kv *KeyValue) mapFile(fileName string){
 
     file,err = os.OpenFile(fileName, os.O_RDWR, 600)
     if(err != nil){
-        fmt.Println("ERROR in mapFile os.OpenFile:", err)
-        os.Exit(1)
+        return fmt.Errorf("mapFile->os.OpenFile: %v", err)
     }
     kv.fp = file
 
     fileInfo,err = file.Stat()
     if(err != nil){
-        fmt.Println("ERROR in mapFile file.Stat:", err)
-        os.Exit(1)
+        return fmt.Errorf("mapFile->file.Stat: %v", err)
     }
 
     if(fileInfo.Size()%TREE_PAGE_SIZE != 0){
-        fmt.Println("file size not a multiple of page size")
-        os.Exit(1)
+        return fmt.Errorf("mapFile->file size not a multiple of page size")
     }
 
     kv.fSize = max(uint64(fileInfo.Size()), 4*TREE_PAGE_SIZE)
@@ -228,8 +247,7 @@ func (kv *KeyValue) mapFile(fileName string){
         syscall.MAP_SHARED,
     )
     if(err != nil){
-        fmt.Println("ERROR in mapFile syscall.Mmap:", err)
-        os.Exit(1)
+        return fmt.Errorf("mapFile->syscall.Mmap: %v", err)
     }
 
     err = syscall.Fallocate(
@@ -237,11 +255,11 @@ func (kv *KeyValue) mapFile(fileName string){
         int64(kv.fSize),
     )
     if(err != nil){
-        fmt.Println("ERROR in mapFile syscall.Fallocate:", err)
-        os.Exit(1)
+        return fmt.Errorf("mapFile->syscall.Fallocate: %v", err)
     }
 
     kv.data = append(kv.data, fileChunk)
+    return nil
 }
 
 func (kv *KeyValue) extendMap() error {
@@ -356,7 +374,7 @@ func (tx *Transaction) Rollback(){
         table.kv.altRootOffset = table.kv.rootOffset
 
         for col, off := range(tx.indexMap[table.name]){
-            table.index[col] = off
+            table.Index[col] = off
         }
         
         table.kv.pushList.setNoffs(0)
@@ -400,11 +418,13 @@ func (kv *KeyValue) changeRoot(){
     metaPage := kv.page(0)
 
     if(binary.LittleEndian.Uint16(metaPage[:]) == META_TYPE_IDX){
+        kv.altRootOffset = kv.altRootByte.selfPtr
         kv.rootByte = kv.altRootByte
         kv.rootOffset = kv.altRootOffset
         kv.rootByte.selfPtr = kv.rootOffset
-        kv.table.index[kv.colname] = kv.rootOffset
+        kv.table.Index[kv.colname] = kv.rootOffset
     }else{
+        kv.altRootOffset = kv.altRootByte.selfPtr
         kv.rootOffset = kv.altRootOffset
         kv.rootByte = kv.altRootByte
     }
@@ -417,8 +437,8 @@ func (kv *KeyValue) Insert(key []byte, value []byte){
 func (kv *KeyValue) InsertIndex(colname string, key []byte, value []byte){
     kv.colname = colname
     kv.rootByte = new(NodeByte)
-    kv.rootByte.data = kv.page(kv.table.index[colname])
-    kv.rootOffset = kv.table.index[colname]
+    kv.rootByte.data = kv.page(kv.table.Index[colname])
+    kv.rootOffset = kv.table.Index[colname]
     kv.rootByte.selfPtr = kv.rootOffset
     kv.rootByte.tree = kv.tree
     
@@ -432,8 +452,8 @@ func (kv *KeyValue) Delete(key []byte){
 func (kv *KeyValue) DeleteIndex(colname string, key []byte){
     kv.colname = colname
     kv.rootByte = new(NodeByte)
-    kv.rootByte.data = kv.page(kv.table.index[colname])
-    kv.rootOffset = kv.table.index[colname]
+    kv.rootByte.data = kv.page(kv.table.Index[colname])
+    kv.rootOffset = kv.table.Index[colname]
     kv.rootByte.selfPtr = kv.rootOffset
     kv.rootByte.tree = kv.tree
     
@@ -447,8 +467,8 @@ func (kv *KeyValue) Update(key []byte, value []byte){
 func (kv *KeyValue) UpdateIndex(colname string, key []byte, value []byte){
     kv.colname = colname
     kv.rootByte = new(NodeByte)
-    kv.rootByte.data = kv.page(kv.table.index[colname])
-    kv.rootOffset = kv.table.index[colname]
+    kv.rootByte.data = kv.page(kv.table.Index[colname])
+    kv.rootOffset = kv.table.Index[colname]
     kv.rootByte.selfPtr = kv.rootOffset
     kv.rootByte.tree = kv.tree
     
@@ -463,8 +483,8 @@ func (kv *KeyValue) Get(key []byte) []byte{
 func (kv *KeyValue) GetPkeyByIndex(colname string, key []byte) [][]byte{
     kv.colname = colname
     kv.rootByte = new(NodeByte)
-    kv.rootByte.data = kv.page(kv.table.index[colname])
-    kv.rootOffset = kv.table.index[colname]
+    kv.rootByte.data = kv.page(kv.table.Index[colname])
+    kv.rootOffset = kv.table.Index[colname]
     kv.rootByte.selfPtr = kv.rootOffset
 
     var pkey [][]byte
@@ -483,8 +503,8 @@ func (kv *KeyValue) Range(keyStart []byte, keyEnd []byte) [][]byte {
 func (kv *KeyValue) RangeIdx(colname string, keyStart []byte, keyEnd []byte) [][]byte{
     kv.colname = colname
     kv.rootByte = new(NodeByte)
-    kv.rootByte.data = kv.page(kv.table.index[colname])
-    kv.rootOffset = kv.table.index[colname]
+    kv.rootByte.data = kv.page(kv.table.Index[colname])
+    kv.rootOffset = kv.table.Index[colname]
     kv.rootByte.selfPtr = kv.rootOffset
     
     var it RangeIter
@@ -499,9 +519,9 @@ func (kv *KeyValue) Print(){
 }
 
 func (kv *KeyValue) PrintIndex(){
-    for col := range(kv.table.index){
+    for col := range(kv.table.Index){
         node := new(NodeByte)
-        node.data = kv.page(kv.table.index[col])
+        node.data = kv.page(kv.table.Index[col])
         node.tree = kv.tree
         fmt.Println(col)
         kv.tree.printTree(node, 0)

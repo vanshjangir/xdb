@@ -15,8 +15,9 @@ type Table struct{
 
     name string
     idxname string
-    index map[string]uint64
-    columns []string
+    Index map[string]uint64
+    Keyname string
+    Columns []string
 }
 
 const (
@@ -30,12 +31,12 @@ func (table *Table) Init(tx *Transaction){
     table.kv.Init(tx, table)
     table.idxkv = new(KeyValue)
     table.idxkv.Init(tx, table)
-    table.index = make(map[string]uint64)
+    table.Index = make(map[string]uint64)
 }
 
 func (table *Table) encode(secMap map[string][]byte) []byte{
     var value []byte
-    for _, colname := range(table.columns){
+    for _, colname := range(table.Columns){
         tmp := make([]byte, 2)
         binary.LittleEndian.PutUint16(tmp, uint16(len(secMap[colname])))
         value = append(value, tmp[0])
@@ -50,7 +51,7 @@ func (table *Table) encode(secMap map[string][]byte) []byte{
 func (table *Table) decode(value []byte) map[string][]byte{
     secMap := make(map[string][]byte)
     var i int = 0
-    for _,colname := range(table.columns){
+    for _,colname := range(table.Columns){
         if(i >= len(value)){
             break
         }
@@ -68,32 +69,41 @@ func (table *Table) decode(value []byte) map[string][]byte{
     return secMap
 }
 
-func (table *Table) CreateTable(tname string) error {
+func (table *Table) CreateTable(tname string, cols []string, colSize []int) error {
     fullFilePath := "files/"+tname
     fullIndexPath := "files/"+tname+".idx"
     table.name = tname
     table.idxname = tname+".idx"
 
-    if _,err := os.Create(fullFilePath); err != nil{
-        return fmt.Errorf("ERROR creating table file: %v", err)
+    if _,err := os.Create(fullFilePath); err != nil {
+        return fmt.Errorf("os.Create file %v: %v", fullFilePath, err)
     }
     
-    if _,err := os.Create(fullIndexPath); err != nil{
-        return fmt.Errorf("ERROR creating index file: %v", err)
+    if _,err := os.Create(fullIndexPath); err != nil {
+        return fmt.Errorf("os.Create index %v: %v", fullIndexPath, err)
     }
 
-    table.kv.Create(fullFilePath)
+    table.Keyname = cols[0]
+    totalSize := 0
+    for i := range colSize {
+        totalSize += colSize[i]
+        if(i > 0){
+            table.Index[cols[i]] = 0
+            table.Columns = append(table.Columns, cols[i])
+        }
+    }
+    totalSize += 4
+   
+    // Max keys to store in a page/node
+    var maxKeys uint16
+    maxKeys = uint16((TREE_PAGE_SIZE - 20 - 2)/(totalSize)) - 1
     
-    table.index["firstcol"] = 0
-    table.index["secondcol"] = 0
-    table.columns = append(table.columns, "firstcol")
-    table.columns = append(table.columns, "secondcol")
-    
+    table.kv.Create(fullFilePath, maxKeys, cols[0])
     table.idxkv.CreateIdx(fullIndexPath)
 
     if(table.tx.isGoing == true){
         table.tx.rootMap[table.name] = table.kv.rootOffset
-        for idxname, offset := range(table.index){
+        for idxname, offset := range(table.Index){
             table.tx.indexMap[table.name][idxname] = offset
         }
         table.kv.nNewPages = 0
@@ -103,29 +113,39 @@ func (table *Table) CreateTable(tname string) error {
         table.tx.tables = append(table.tx.tables, table)
     }
 
-    // setting max keys per node as 3 for testing
-    // will be set according to the size of a row in the table
-    table.kv.tree.Init(3)
-    table.idxkv.tree.Init(3)
+    // Setting the same max keys for main tree and sec tree
+    // can be changed acc to column size in sec tree
+    table.kv.tree.Init(maxKeys)
+    table.idxkv.tree.Init(maxKeys)
 
     return nil
 }
 
-func (table *Table) LoadTable(tname string){
+func (table *Table) LoadTable(tname string) error {
     fullFilePath := "files/"+tname
     table.name = tname
     table.idxname = tname+".idx"
     fullIndexPath := "files/"+tname+".idx"
+    var maxKeys uint16
     
-    table.kv.Load(fullFilePath)
-    table.columns = table.idxkv.LoadIdx(fullIndexPath)
+    if keys, name, err := table.kv.Load(fullFilePath); err != nil {
+        return fmt.Errorf("table.kv.Load: %v", err)
+    } else {
+        maxKeys = keys
+        table.Keyname = name
+    }
+    
+    if err := table.idxkv.LoadIdx(fullIndexPath); err != nil {
+        return fmt.Errorf("table.idxkv.LoadIdx: %v", err)
+    }
+
     table.tx.indexMap[table.name] = make(map[string]uint64)
 
     if(table.tx.isGoing == true){
         _, ok := table.tx.rootMap[table.name]
         if(ok == false){
             table.tx.rootMap[table.name] = table.kv.rootOffset
-            for idxname, offset := range(table.index){
+            for idxname, offset := range(table.Index){
                 table.tx.indexMap[table.name][idxname] = offset
             }
             table.kv.nNewPages = 0
@@ -136,10 +156,12 @@ func (table *Table) LoadTable(tname string){
         }
     }
     
-    // setting max keys per node as 3 for testing
-    // will be set according to the size of a row in the table
-    table.kv.tree.Init(3)
-    table.idxkv.tree.Init(3)
+    // Setting the same max keys for main tree and sec tree
+    // can be changed acc to column size in sec tree
+    table.kv.tree.Init(maxKeys)
+    table.idxkv.tree.Init(maxKeys)
+
+    return nil
 }
 
 func (table *Table) Insert(key []byte, secMap map[string][]byte){
