@@ -1,20 +1,28 @@
 package database
 
 import (
-    "encoding/binary"
-    "fmt"
-    "strconv"
-    "strings"
-    "github.com/vanshjangir/xdb/storage"
-    "github.com/xwb1989/sqlparser"
+	"encoding/binary"
+	"fmt"
+	"strconv"
+	"strings"
+    "os"
+
+	"github.com/vanshjangir/xdb/storage"
+	"github.com/xwb1989/sqlparser"
 )
 
 func Parse(db *Xdb, query string){
     cmds := strings.Split(query, " ")
     if(cmds[0] == "db"){
-        execDbCmds(db, cmds)
-        return 
+        parseDB(db, cmds)
+    } else if(cmds[0] == "exit") {
+        os.Exit(0)
+    } else {
+        parseSQL(db, query)
     }
+}
+
+func parseSQL(db *Xdb, query string){
     stmt, err := sqlparser.Parse(query)
     if(err != nil){
         fmt.Println("Syntax Error in sql query: ", err)
@@ -37,14 +45,29 @@ func Parse(db *Xdb, query string){
     }
 }
 
-func execDbCmds(db *Xdb, cmds []string){
+func parseDB(db *Xdb, cmds []string){
     switch cmd := cmds[1]; cmd {
+    case "use":
+        if err := db.Init(cmds[2]); err != nil {
+            fmt.Println(err)
+        }
+
+    case "create":
+        if err := CreateDatabase(cmds[2]); err != nil {
+            fmt.Println(err)
+        }
+
     case "begin":
         db.BeginTxn()
+        fmt.Println("New transaction started")
+
     case "rollback":
         db.RollbackTxn()
+        fmt.Println("Transaction rolled back")
+
     case "commit":
         db.CommitTxn()
+        fmt.Println("Transaction committed")
     }
 }
 

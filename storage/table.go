@@ -70,8 +70,9 @@ func (table *Table) decode(value []byte) map[string][]byte{
 }
 
 func (table *Table) CreateTable(tname string, cols []string, colSize []int) error {
-    fullFilePath := "files/"+tname
-    fullIndexPath := "files/"+tname+".idx"
+    homeDir, _ := os.UserHomeDir()
+    fullFilePath := homeDir+"/"+tname
+    fullIndexPath := homeDir+"/"+tname+".idx"
     table.name = tname
     table.idxname = tname+".idx"
 
@@ -111,6 +112,8 @@ func (table *Table) CreateTable(tname string, cols []string, colSize []int) erro
         table.kv.fl.makeFreeListCopy()
         table.idxkv.fl.makeFreeListCopy()
         table.tx.tables = append(table.tx.tables, table)
+    } else {
+        return fmt.Errorf("No ongoing transaction")
     }
 
     // Setting the same max keys for main tree and sec tree
@@ -122,10 +125,11 @@ func (table *Table) CreateTable(tname string, cols []string, colSize []int) erro
 }
 
 func (table *Table) LoadTable(tname string) error {
-    fullFilePath := "files/"+tname
+    homeDir, _ := os.UserHomeDir()
+    fullFilePath := homeDir+"/"+tname
     table.name = tname
     table.idxname = tname+".idx"
-    fullIndexPath := "files/"+tname+".idx"
+    fullIndexPath := homeDir+"/"+tname+".idx"
     var maxKeys uint16
     
     if keys, name, err := table.kv.Load(fullFilePath); err != nil {
@@ -147,6 +151,7 @@ func (table *Table) LoadTable(tname string) error {
             table.tx.rootMap[table.name] = table.kv.rootOffset
             for idxname, offset := range(table.Index){
                 table.tx.indexMap[table.name][idxname] = offset
+                table.Columns = append(table.Columns, idxname)
             }
             table.kv.nNewPages = 0
             table.idxkv.nNewPages = 0
@@ -154,6 +159,8 @@ func (table *Table) LoadTable(tname string) error {
             table.idxkv.fl.makeFreeListCopy()
             table.tx.tables = append(table.tx.tables, table)
         }
+    } else {
+        return fmt.Errorf("No ongoing transaction")
     }
     
     // Setting the same max keys for main tree and sec tree

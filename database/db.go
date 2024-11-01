@@ -1,10 +1,10 @@
 package database
 
 import (
-	"encoding/binary"
-	"fmt"
-
-	"github.com/vanshjangir/xdb/storage"
+    "encoding/binary"
+    "fmt"
+    "os"
+    "github.com/vanshjangir/xdb/storage"
 )
 
 type Xdb struct{
@@ -13,11 +13,27 @@ type Xdb struct{
     tx *storage.Transaction
 }
 
-func (db *Xdb) Init(name string){
+func (db *Xdb) Init(name string) error {
+    _, err := os.Stat(name+"-xdb")
+    if err != nil || os.IsNotExist(err) {
+        return err
+    }
+
     db.name = name
     db.tx = new(storage.Transaction)
     db.tables = make(map[string]*storage.Table)
     db.tx.Init()
+
+    return nil
+}
+
+func CreateDatabase(name string) error {
+    homeDir, _ := os.UserHomeDir()
+    if err := os.Mkdir(homeDir + "/" + name + "-xdb", 0755); err != nil {
+        return err
+    }
+
+    return nil
 }
 
 func (db *Xdb) BeginTxn(){
@@ -37,7 +53,7 @@ func (db *Xdb) Opentable(tableName string) error {
     if !ok {
         var table storage.Table
         table.Init(db.tx)
-        if err := table.LoadTable(tableName); err != nil {
+        if err := table.LoadTable(db.name + "-xdb/" + tableName); err != nil {
             return fmt.Errorf("table.LoadTable: %v", err)
         }
         db.tables[tableName] = &table
@@ -55,7 +71,7 @@ func (db *Xdb) CreateTable(tableName string, columns []string, colSize []int) er
     db.tables[tableName] = &table
     
     table.Init(db.tx)
-    if err := table.CreateTable(tableName, columns, colSize); err != nil {
+    if err := table.CreateTable(db.name + "-xdb/" + tableName, columns, colSize); err != nil {
         return fmt.Errorf("table.CreateTable: %v", err)
     }
 
