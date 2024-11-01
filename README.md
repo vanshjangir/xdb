@@ -1,5 +1,5 @@
 # xdb
-xdb is an ACID compliant database and storage engine written purely in go. As of now only the storage engine part is complete. Full database with query parser will be implemented soon.
+xdb is an ACID compliant database and storage engine written purely in go.
 
 ### Implementation
 * B+trees for storing data
@@ -14,6 +14,31 @@ xdb is an ACID compliant database and storage engine written purely in go. As of
 * Range queries in O(k * logn) time
 * Secondary Indexes
 * Transactions
+
+### Usage
+* Create a new database (will be created in the home directory)
+```
+db create <database_name>
+```
+* Initialize a database (always initialize before doing anything)
+```
+db use <database_name>
+```
+* Start a transaction (a transaction is necessary to do anything)
+```
+db begin
+```
+* Commit or Rollback a transaction
+```
+db commit/rollback
+```
+* Table related queries are in SQL
+  - [x] create
+  - [x] delete
+  - [x] select (show whole table)
+  - [ ] update
+  - [ ] select (with complex conditions)
+  - [ ] alter
 
 ### Contributing
 The code contains many bugs, and there is much room for optimization, so any contributions are welcome.\
