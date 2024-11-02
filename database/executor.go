@@ -1,14 +1,13 @@
 package database
 
 import (
-	"encoding/binary"
-	"fmt"
-	"strconv"
-	"strings"
+    "encoding/binary"
+    "fmt"
+    "strconv"
+    "strings"
     "os"
-
-	"github.com/vanshjangir/xdb/storage"
-	"github.com/xwb1989/sqlparser"
+    "github.com/vanshjangir/xdb/storage"
+    "github.com/xwb1989/sqlparser"
 )
 
 func Parse(db *Xdb, query string){
