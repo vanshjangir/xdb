@@ -14,7 +14,8 @@ type Xdb struct{
 }
 
 func (db *Xdb) Init(name string) error {
-    _, err := os.Stat(name+"-xdb")
+    homeDir, _ := os.UserHomeDir()
+    _, err := os.Stat(homeDir + "/" + name+"-xdb")
     if err != nil || os.IsNotExist(err) {
         return err
     }

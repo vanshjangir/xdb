@@ -22,6 +22,11 @@ func Parse(db *Xdb, query string){
 }
 
 func parseSQL(db *Xdb, query string){
+    if db.name == "" {
+        fmt.Println("No database initialized")
+        return
+    }
+
     stmt, err := sqlparser.Parse(query)
     if(err != nil){
         fmt.Println("Syntax Error in sql query: ", err)
