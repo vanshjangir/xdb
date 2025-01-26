@@ -11,12 +11,12 @@ func main(){
     fmt.Println("Starting...")
     var db *database.Xdb
     for {
-        name := "nil"
+        name := "xdb"
         if db != nil {
             name = db.Name
         }
 
-        fmt.Printf("[%v] -> ", name)
+        fmt.Printf("%v -> ", name)
         scanner := bufio.NewScanner(os.Stdin)
         scanner.Scan()
         text := scanner.Text()

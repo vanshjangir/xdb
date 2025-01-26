@@ -73,6 +73,9 @@ func (db *Xdb) updateMetaTable(
 }
 
 func CreateDatabase(dbname string) error {
+    if dbname == "xdb" {
+        return fmt.Errorf("Cannot create a database xdb, choose different name")
+    }
     homeDir, _ := os.UserHomeDir()
     if err := os.Mkdir(homeDir + "/" + dbname + "-xdb", 0755); err != nil {
         return err
@@ -200,29 +203,108 @@ func (db *Xdb) Select(tableName string) error {
         end[i] = 255
     }
 
-    res := table.Range([]byte{0}, end)
+    var title [][]byte
+    title = append(title, []byte(db.tables[tableName].Keyname))
     cols := db.tables[tableName].Columns
-    keyname := db.tables[tableName].Keyname
-
-    fmt.Print(keyname)
     for j := range cols {
-        fmt.Print("\t\t", cols[j])
+        title = append(title, []byte(cols[j]))
     }
-    fmt.Println()
+
+    var data [][][]byte
+    data = append(data, title)
+    res := table.Range([]byte{0}, end)
 
     for i := range res {
         idx := 0
+        var rows [][]byte
         for range len(cols)+1 {
             dlen := binary.LittleEndian.Uint16(res[i][idx:idx+2])
-            data := res[i][idx + 2 : idx + 2 + int(dlen)]
-            fmt.Print(string(data), "\t\t")
-
+            row := res[i][idx + 2 : idx + 2 + int(dlen)]
+            rows =append(rows, row)
             idx += int(dlen) + 2
+        }
+        data = append(data, rows)
+    }
+
+    PrintTableStyle(data)
+    
+    return nil
+}
+
+func PrintTableStyle(data [][][]byte) {
+    maxlen := make([]int, len(data[0]))
+    for i := range data {
+        for j := range data[i] {
+            maxlen[j] = max(maxlen[j], len(data[i][j]))
+        }
+    }
+
+    for j := range data[0] {
+        dlen := maxlen[j] + 4 - maxlen[j]%4
+        
+        fmt.Print("+")
+        for range dlen {
+            fmt.Print("-")
+        }
+    }
+    fmt.Print("+")
+    fmt.Println()
+
+    for j := range data[0] {
+        fmt.Print("|")
+        dlen := maxlen[j] + 4 - maxlen[j]%4
+        nspace := dlen - len(data[0][j])
+
+        fmt.Print(string(data[0][j]))
+        for range nspace {
+            fmt.Print(" ")
+        }
+        if j == len(data[0]) - 1 {
+            fmt.Print("|")
+        }
+    }
+    fmt.Println()
+    
+    for j := range data[0] {
+        dlen := maxlen[j] + 4 - maxlen[j]%4
+        
+        fmt.Print("+")
+        for range dlen {
+            fmt.Print("-")
+        }
+    }
+    fmt.Print("+")
+    fmt.Println()
+    
+    for i := range data {
+        if i == 0 {
+            continue
+        }
+        for j := range data[i] {
+            fmt.Print("|")
+            dlen := maxlen[j] + 4 - maxlen[j]%4
+            nspace := dlen - len(data[i][j])
+
+            fmt.Print(string(data[i][j]))
+            for range nspace {
+                fmt.Print(" ")
+            }
+            if j == len(data[i]) - 1 {
+                fmt.Print("|")
+            }
         }
         fmt.Println()
     }
     
-    return nil
+    for j := range data[0] {
+        dlen := maxlen[j] + 4 - maxlen[j]%4
+        
+        fmt.Print("+")
+        for range dlen {
+            fmt.Print("-")
+        }
+    }
+    fmt.Print("+\n\n")
 }
 
 func (db *Xdb) Print(tableName string) error {

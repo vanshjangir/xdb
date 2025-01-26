@@ -2,10 +2,9 @@
 xdb is an ACID compliant database and storage engine written purely in go.
 
 ### Implementation
-* B+trees for storing data
-* Copy-on-write mechanism for atomic updates
-* mmap to map disk pages to memory
-* fsync to flush mapped pages to durable storage
+* B+trees
+* Copy-on-write mechanism
+* mmap and fsync
 
 ### Features
 * Atomic updates (either full transaction or none at all)

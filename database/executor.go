@@ -15,17 +15,17 @@ func Parse(dbp **Xdb, query string){
     if(cmds[0] == "exit"){
         os.Exit(0)
     } else if(cmds[0] == "db") {
-        parseXDB(dbp, cmds)
+        parsexdb(dbp, cmds)
     } else {
         if *dbp == nil {
             fmt.Println("No database initialized")
             return
         }
-        parseSQL(*dbp, query)
+        parsesql(*dbp, query)
     }
 }
 
-func parseSQL(db *Xdb, query string){
+func parsesql(db *Xdb, query string){
     if db.tx == nil || db.tx.IsGoing == false {
         fmt.Println("No ongoing transaction")
         return
@@ -58,7 +58,7 @@ func parseSQL(db *Xdb, query string){
     }
 }
 
-func parseXDB(dbp **Xdb, cmds []string){
+func parsexdb(dbp **Xdb, cmds []string){
     switch cmd := cmds[1]; cmd {
     case "use":
         if *dbp != nil && (*dbp).tx != nil {
@@ -77,6 +77,7 @@ func parseXDB(dbp **Xdb, cmds []string){
         if err := (*dbp).Init(cmds[2]); err != nil {
             fmt.Println(err)
         }
+        fmt.Println("Now using database:", cmds[2])
 
     case "create":
         if err := CreateDatabase(cmds[2]); err != nil {
@@ -84,11 +85,17 @@ func parseXDB(dbp **Xdb, cmds []string){
         }
 
     case "show":
-        if (*dbp).Name == "" {
+        if dbp == nil {
             fmt.Println("No database in use")
-        } else {
-            fmt.Println((*dbp).Name)
+            return
         }
+
+        if (*dbp).tx == nil {
+            fmt.Println("No ongoing transaction")
+            return
+        }
+
+        (*dbp).Select((*dbp).Name + "_meta")
 
     case "ls":
         ListDB()
@@ -115,7 +122,7 @@ func parseXDB(dbp **Xdb, cmds []string){
         fmt.Println("New transaction started")
 
     case "rollback":
-        if (*dbp) == nil || (*dbp).tx.IsGoing == false {
+        if (*dbp) == nil || (*dbp).tx == nil {
             fmt.Println("No ongoing transaction")
             return
         }
@@ -123,7 +130,7 @@ func parseXDB(dbp **Xdb, cmds []string){
         fmt.Println("Transaction rolled back")
 
     case "commit":
-        if (*dbp) == nil || (*dbp).tx.IsGoing == false {
+        if (*dbp) == nil || (*dbp).tx == nil {
             fmt.Println("No ongoing transaction")
             return
         }

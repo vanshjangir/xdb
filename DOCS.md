@@ -7,7 +7,7 @@ db create <database_name>
 ```
 db ls
 ```
-* Show current database
+* Show all tables
 ```
 db show
 ```
@@ -23,10 +23,10 @@ db begin
 ```
 db commit/rollback
 ```
-* Table related queries are in SQL(currently supports only basic where clauses)
+* Table related queries are in SQL(currently supports only basic where clauses), first column will be considered as a sort of unique key.
   - [x] create
   - [x] delete
-  - [x] select (show whole table)
+  - [x] select (show whole table and all columns)
   - [ ] update
   - [ ] select (with complex conditions)
   - [ ] alter
