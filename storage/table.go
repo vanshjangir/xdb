@@ -70,6 +70,10 @@ func (table *Table) decode(value []byte) map[string][]byte{
 }
 
 func (table *Table) CreateTable(tname string, cols []string, colSize []int) error {
+    if(table.tx.IsGoing == false){
+        return fmt.Errorf("No ongoing transaction")
+    }
+    
     homeDir, _ := os.UserHomeDir()
     fullFilePath := homeDir+"/"+tname
     fullIndexPath := homeDir+"/"+tname+".idx"
@@ -102,19 +106,15 @@ func (table *Table) CreateTable(tname string, cols []string, colSize []int) erro
     table.kv.Create(fullFilePath, maxKeys, cols[0])
     table.idxkv.CreateIdx(fullIndexPath)
 
-    if(table.tx.isGoing == true){
-        table.tx.rootMap[table.name] = table.kv.rootOffset
-        for idxname, offset := range(table.Index){
-            table.tx.indexMap[table.name][idxname] = offset
-        }
-        table.kv.nNewPages = 0
-        table.idxkv.nNewPages = 0
-        table.kv.fl.makeFreeListCopy()
-        table.idxkv.fl.makeFreeListCopy()
-        table.tx.tables = append(table.tx.tables, table)
-    } else {
-        return fmt.Errorf("No ongoing transaction")
+    table.tx.rootMap[table.name] = table.kv.rootOffset
+    for idxname, offset := range(table.Index){
+        table.tx.indexMap[table.name][idxname] = offset
     }
+    table.kv.nNewPages = 0
+    table.idxkv.nNewPages = 0
+    table.kv.fl.makeFreeListCopy()
+    table.idxkv.fl.makeFreeListCopy()
+    table.tx.tables = append(table.tx.tables, table)
 
     // Setting the same max keys for main tree and sec tree
     // can be changed acc to column size in sec tree
@@ -125,6 +125,10 @@ func (table *Table) CreateTable(tname string, cols []string, colSize []int) erro
 }
 
 func (table *Table) LoadTable(tname string) error {
+    if(table.tx.IsGoing == false){
+        return fmt.Errorf("No ongoing transaction")
+    }
+    
     homeDir, _ := os.UserHomeDir()
     fullFilePath := homeDir+"/"+tname
     table.name = tname
@@ -145,22 +149,18 @@ func (table *Table) LoadTable(tname string) error {
 
     table.tx.indexMap[table.name] = make(map[string]uint64)
 
-    if(table.tx.isGoing == true){
-        _, ok := table.tx.rootMap[table.name]
-        if(ok == false){
-            table.tx.rootMap[table.name] = table.kv.rootOffset
-            for idxname, offset := range(table.Index){
-                table.tx.indexMap[table.name][idxname] = offset
-                table.Columns = append(table.Columns, idxname)
-            }
-            table.kv.nNewPages = 0
-            table.idxkv.nNewPages = 0
-            table.kv.fl.makeFreeListCopy()
-            table.idxkv.fl.makeFreeListCopy()
-            table.tx.tables = append(table.tx.tables, table)
+    _, ok := table.tx.rootMap[table.name]
+    if(ok == false){
+        table.tx.rootMap[table.name] = table.kv.rootOffset
+        for idxname, offset := range(table.Index){
+            table.tx.indexMap[table.name][idxname] = offset
+            table.Columns = append(table.Columns, idxname)
         }
-    } else {
-        return fmt.Errorf("No ongoing transaction")
+        table.kv.nNewPages = 0
+        table.idxkv.nNewPages = 0
+        table.kv.fl.makeFreeListCopy()
+        table.idxkv.fl.makeFreeListCopy()
+        table.tx.tables = append(table.tx.tables, table)
     }
     
     // Setting the same max keys for main tree and sec tree

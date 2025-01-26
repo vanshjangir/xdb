@@ -10,20 +10,24 @@ import (
     "github.com/xwb1989/sqlparser"
 )
 
-func Parse(db *Xdb, query string){
+func Parse(dbp **Xdb, query string){
     cmds := strings.Split(query, " ")
-    if(cmds[0] == "db"){
-        parseDB(db, cmds)
-    } else if(cmds[0] == "exit") {
+    if(cmds[0] == "exit"){
         os.Exit(0)
+    } else if(cmds[0] == "db") {
+        parseXDB(dbp, cmds)
     } else {
-        parseSQL(db, query)
+        if *dbp == nil {
+            fmt.Println("No database initialized")
+            return
+        }
+        parseSQL(*dbp, query)
     }
 }
 
 func parseSQL(db *Xdb, query string){
-    if db.name == "" {
-        fmt.Println("No database initialized")
+    if db.tx == nil || db.tx.IsGoing == false {
+        fmt.Println("No ongoing transaction")
         return
     }
 
@@ -38,21 +42,39 @@ func parseSQL(db *Xdb, query string){
         if(stmt.Action == "create"){
             execCreateStmt(db, stmt)
         }
+
     case *sqlparser.Insert:
         execInsertStmt(db, stmt)
+
     case *sqlparser.Delete:
         execDeleteStmt(db, stmt)
+
     case *sqlparser.Update:
         execUpdateStmt(db, stmt)
+
     case *sqlparser.Select:
         execSelectStmt(db, stmt)
+
     }
 }
 
-func parseDB(db *Xdb, cmds []string){
+func parseXDB(dbp **Xdb, cmds []string){
     switch cmd := cmds[1]; cmd {
     case "use":
-        if err := db.Init(cmds[2]); err != nil {
+        if *dbp != nil && (*dbp).tx != nil {
+            fmt.Println("An ongoing transaction already exists")
+            fmt.Print("[rs (rollback previous and start new), c (cancel)] : ")
+            
+            input := ""
+            fmt.Scanf("%v", input)
+            if input == "rb" {
+                (*dbp).RollbackTxn()
+                return
+            }
+        }
+
+        *dbp = new(Xdb)
+        if err := (*dbp).Init(cmds[2]); err != nil {
             fmt.Println(err)
         }
 
@@ -61,16 +83,51 @@ func parseDB(db *Xdb, cmds []string){
             fmt.Println(err)
         }
 
+    case "show":
+        if (*dbp).Name == "" {
+            fmt.Println("No database in use")
+        } else {
+            fmt.Println((*dbp).Name)
+        }
+
+    case "ls":
+        ListDB()
+
     case "begin":
-        db.BeginTxn()
+        if dbp == nil {
+            fmt.Println("No database selected")
+            return
+        }
+        
+        if (*dbp).tx != nil {
+            fmt.Println("An ongoing transaction already exists")
+            fmt.Print("[rs (rollback previous and start new), c (cancel)] : ")
+            
+            input := ""
+            fmt.Scanf("%v", input)
+            if input == "rb" {
+                (*dbp).RollbackTxn()
+                return
+            }
+        }
+
+        (*dbp).BeginTxn()
         fmt.Println("New transaction started")
 
     case "rollback":
-        db.RollbackTxn()
+        if (*dbp) == nil || (*dbp).tx.IsGoing == false {
+            fmt.Println("No ongoing transaction")
+            return
+        }
+        (*dbp).RollbackTxn()
         fmt.Println("Transaction rolled back")
 
     case "commit":
-        db.CommitTxn()
+        if (*dbp) == nil || (*dbp).tx.IsGoing == false {
+            fmt.Println("No ongoing transaction")
+            return
+        }
+        (*dbp).CommitTxn()
         fmt.Println("Transaction committed")
     }
 }
@@ -87,8 +144,8 @@ func execCreateStmt(db *Xdb, stmt *sqlparser.DDL){
         }
     }
 
-    fmt.Println(columns, colSize)
-    if err := db.CreateTable(stmt.NewName.Name.String(), columns, colSize);
+    tableName := stmt.NewName.Name.String()
+    if err := db.CreateTable(tableName, columns, colSize);
     err != nil {
         fmt.Println("Error in create table: ", err)
     }

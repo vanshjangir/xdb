@@ -16,35 +16,13 @@ xdb is an ACID compliant database and storage engine written purely in go.
 * Transactions
 
 ### Usage
-* Create a new database (will be created in the home directory)
-```
-db create <database_name>
-```
-* Initialize a database (always initialize before doing anything)
-```
-db use <database_name>
-```
-* Start a transaction (a transaction is necessary to do anything)
-```
-db begin
-```
-* Commit or Rollback a transaction
-```
-db commit/rollback
-```
-* Table related queries are in SQL
-  - [x] create
-  - [x] delete
-  - [x] select (show whole table)
-  - [ ] update
-  - [ ] select (with complex conditions)
-  - [ ] alter
+Currently working on more complex sql queries, check docs [here](https://github.com/vanshjangir/xdb/blob/master/DOCS.md).
 
 ### Contributing
 The code contains many bugs, and there is much room for optimization, so any contributions are welcome.\
 [Todo](https://github.com/vanshjangir/xdb/issues/1)
 
-### Useful
+### References
 * [build-your-own-db](https://build-your-own.org/database/00a_overview)
 * [mmap-tsoding](https://www.youtube.com/watch?v=sFYFuBzu9Ow)
 * [B+tree visualization](https://www.cs.usfca.edu/~galles/visualization/BPlusTree.html)

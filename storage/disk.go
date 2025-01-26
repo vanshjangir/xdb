@@ -24,7 +24,7 @@ const (
 )
 
 type Transaction struct{
-    isGoing bool
+    IsGoing bool
     rootMap map[string]uint64
     indexMap map[string]map[string]uint64
     afterAllocPages map[string][]uint64
@@ -78,7 +78,7 @@ func (kv *KeyValue) Init(tx *Transaction, table *Table){
 }
 
 func (tx *Transaction) Init(){
-    tx.isGoing = false
+    tx.IsGoing = false
     tx.rootMap = make(map[string]uint64)
     tx.indexMap = make(map[string]map[string]uint64)
     tx.afterAllocPages = make(map[string][]uint64)
@@ -111,10 +111,11 @@ func (kv *KeyValue) loadMeta() (uint16, string) {
     kv.rootByte = new(NodeByte)
     kv.rootByte.data = kv.page(kv.rootOffset)
     kv.rootByte.selfPtr = kv.rootOffset
+    kv.rootByte.tree = kv.tree
 
     kv.freeList = new(NodeFreeList)
     kv.freeList.data = kv.page(FL_OFF)
-    
+
     keynameLen := binary.LittleEndian.Uint16(metaPage[26:])
     keyname := string(metaPage[28:28+keynameLen])
 
@@ -354,7 +355,7 @@ func (kv *KeyValue) updateFreeList(){
 }
 
 func (tx *Transaction) Begin(){
-    tx.isGoing = true
+    tx.IsGoing = true
 }
 
 func (tx *Transaction) Commit(){
@@ -363,6 +364,7 @@ func (tx *Transaction) Commit(){
         table.kv.flush()
         table.idxkv.flush()
     }
+    tx.IsGoing = false
 }
 
 func (tx *Transaction) Rollback(){
@@ -387,7 +389,7 @@ func (tx *Transaction) Rollback(){
         tx.afterAllocPages[table.name] = tx.afterAllocPages[table.name][:0]
         table.kv.flush()
     }
-    tx.isGoing = false
+    tx.IsGoing = false
 }
 
 func (kv *KeyValue) flush(){
