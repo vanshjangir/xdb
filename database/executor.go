@@ -40,20 +40,20 @@ func parsesql(db *Xdb, query string){
     switch stmt := stmt.(type) {
     case *sqlparser.DDL:
         if(stmt.Action == "create"){
-            execCreateStmt(db, stmt)
+            createStmt(db, stmt)
         }
 
     case *sqlparser.Insert:
-        execInsertStmt(db, stmt)
+        insertStmt(db, stmt)
 
     case *sqlparser.Delete:
-        execDeleteStmt(db, stmt)
+        deleteStmt(db, stmt)
 
     case *sqlparser.Update:
-        execUpdateStmt(db, stmt)
+        updateStmt(db, stmt)
 
     case *sqlparser.Select:
-        execSelectStmt(db, stmt)
+        selectStmt(db, stmt)
 
     }
 }
@@ -139,7 +139,7 @@ func parsexdb(dbp **Xdb, cmds []string){
     }
 }
 
-func execCreateStmt(db *Xdb, stmt *sqlparser.DDL){
+func createStmt(db *Xdb, stmt *sqlparser.DDL){
     var colSize []int
     var columns []string
     for _, col := range stmt.TableSpec.Columns {
@@ -158,7 +158,7 @@ func execCreateStmt(db *Xdb, stmt *sqlparser.DDL){
     }
 }
 
-func execInsertStmt(db *Xdb, stmt *sqlparser.Insert){
+func insertStmt(db *Xdb, stmt *sqlparser.Insert){
     var columns []string
     for i := range stmt.Columns {
         columns = append(columns, sqlparser.String(stmt.Columns[i]))
@@ -178,7 +178,7 @@ func execInsertStmt(db *Xdb, stmt *sqlparser.Insert){
     }
 }
 
-func execDeleteStmt(db *Xdb, stmt *sqlparser.Delete){
+func deleteStmt(db *Xdb, stmt *sqlparser.Delete){
     var tablename string
     if len(stmt.TableExprs) > 0 {
         if alias, ok := stmt.TableExprs[0].(*sqlparser.AliasedTableExpr); ok {
@@ -194,10 +194,10 @@ func execDeleteStmt(db *Xdb, stmt *sqlparser.Delete){
     }
 }
 
-func execUpdateStmt(db *Xdb, stmt *sqlparser.Update){
+func updateStmt(db *Xdb, stmt *sqlparser.Update){
 }
 
-func execSelectStmt(db *Xdb, stmt *sqlparser.Select){
+func selectStmt(db *Xdb, stmt *sqlparser.Select){
     tableExpr := stmt.From[0].(*sqlparser.AliasedTableExpr)
     tableName := tableExpr.Expr.(sqlparser.TableName).Name.String()
     db.Select(tableName)
