@@ -14,8 +14,27 @@ func Parse(dbp **Xdb, query string){
     cmds := strings.Split(query, " ")
     if(cmds[0] == "exit"){
         os.Exit(0)
+
     } else if(cmds[0] == "db") {
         parsexdb(dbp, cmds)
+
+    } else if(cmds[0] == "help"){
+        fmt.Println()
+        fmt.Println("Database commands")
+        fmt.Println()
+        fmt.Println("db ls                  - List all databases")
+        fmt.Println("db use <db_name>       - Use an existing databases")
+        fmt.Println("db create <db_name>    - Create a existing databases")
+        fmt.Println("db show                - Show all tables in current database")
+        fmt.Println("db begin               - Begin a transaction")
+        fmt.Println("db commit              - Commit a transaction")
+        fmt.Println("db rollback            - Rollback a transaction")
+        fmt.Println()
+        fmt.Println("Table commands")
+        fmt.Println("Same sql commands, not all are supported yet")
+        fmt.Println()
+        fmt.Println("help                   - List of available commands")
+
     } else {
         if *dbp == nil {
             fmt.Println("No database initialized")
@@ -76,6 +95,8 @@ func parsexdb(dbp **Xdb, cmds []string){
         *dbp = new(Xdb)
         if err := (*dbp).Init(cmds[2]); err != nil {
             fmt.Println(err)
+            *dbp = nil
+            return
         }
         fmt.Println("Now using database:", cmds[2])
 

@@ -16,7 +16,12 @@ func main(){
             name = db.Name
         }
 
-        fmt.Printf("%v -> ", name)
+        txStatus := ""
+        if ok := db.TxStatus(); ok {
+            txStatus = "*"
+        }
+
+        fmt.Printf("%v%v -> ", name, txStatus)
         scanner := bufio.NewScanner(os.Stdin)
         scanner.Scan()
         text := scanner.Text()
