@@ -107,6 +107,13 @@ func (db *Xdb) RollbackTxn(){
     db.tables = nil
 }
 
+func (db *Xdb) TxStatus() bool {
+    if db != nil && db.tx != nil {
+        return true
+    }
+    return false
+}
+
 func ListDB(){
     homeDir, _ := os.UserHomeDir()
     entries, err := os.ReadDir(homeDir)
@@ -118,7 +125,7 @@ func ListDB(){
     for _, v := range entries {
         if v.IsDir() {
             if ok, _ := regexp.MatchString(`.*-xdb$`,v.Name()); ok {
-                fmt.Println(v.Name())
+                fmt.Println(v.Name()[:len(v.Name())-4])
             }
         }
     }
