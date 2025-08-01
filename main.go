@@ -5,10 +5,12 @@ import (
     "bufio"
     "os"
     "github.com/vanshjangir/xdb/database"
+	"github.com/common-nighthawk/go-figure"
 )
 
 func main(){
-    fmt.Println("Starting...")
+	figure.NewFigure("XDB", "doom", true).Print()
+    fmt.Printf("\n\n")
     var db *database.Xdb
     for {
         name := "xdb"
